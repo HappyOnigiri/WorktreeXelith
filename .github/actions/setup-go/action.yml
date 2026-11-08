@@ -12,12 +12,21 @@ runs:
   using: composite
   steps:
     - id: setup-go
+      continue-on-error: true
       uses: actions/setup-go@d35c59abb061a4a6fb18e82ac0862c26744d6ab5 # v5.5.0
       with:
         go-version-file: go.mod
         # setup-go's built-in key covers neither a caller-provided namespace nor
         # the source tree. Use the official setup action for toolchain
         # installation and the explicit cache actions below instead.
+        cache: false
+    # setup-go自身の再試行後にも一時的な取得失敗が残る場合に備えて再実行する。
+    - id: retry-setup-go
+      name: Retry Go toolchain setup
+      if: steps.setup-go.outcome == 'failure'
+      uses: actions/setup-go@d35c59abb061a4a6fb18e82ac0862c26744d6ab5 # v5.5.0
+      with:
+        go-version-file: go.mod
         cache: false
     - id: go-cache-paths
       name: Locate Go caches
@@ -34,7 +43,7 @@ runs:
         # 依存関係はgo.sumだけで決まり、ビルドキャッシュはsource世代をまたいで共有する。
         DEPENDENCY_HASH: ${{ hashFiles('go.sum') }}
         RUNNER_PLATFORM: ${{ runner.os }}-${{ runner.arch }}
-        GO_VERSION: ${{ steps.setup-go.outputs.go-version }}
+        GO_VERSION: ${{ steps.setup-go.outputs.go-version || steps.retry-setup-go.outputs.go-version }}
         CACHE_NAME: ${{ inputs.cache-name }}
       run: |
         prefix="$RUNNER_PLATFORM-$GO_VERSION"
