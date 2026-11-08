@@ -521,7 +521,15 @@ async function collectCI({ github, owner, repo, runId, attempt, source, options 
     if (job.html_url) jobUrls.set(profile, job.html_url);
   }
   const artifacts = await pages((page) => github.rest.actions.listWorkflowRunArtifacts({ owner, repo, run_id: Number(runId), per_page: 100, page }));
-  const usable = artifacts.filter((artifact) => !artifact.expired && artifact.workflow_run?.id === Number(runId) && artifactNamePattern(runId, attempt).test(artifact.name));
+  // 失敗したアップロードが不完全なZIPを残すことがあるため、報告対象のjobに絞る。
+  const artifactPattern = artifactNamePattern(runId, attempt);
+  const usable = artifacts.filter((artifact) => {
+    const profile = profileFromArtifactName(artifact.name);
+    return !artifact.expired
+      && artifact.workflow_run?.id === Number(runId)
+      && artifactPattern.test(artifact.name)
+      && expected.has(profile);
+  });
   // 取りこぼした成果物は最後に失敗として報告する。
   // ここで打ち切ると、同じrunの他のジョブが記録した回復まで起票されない。
   const missing = [...expected].filter((profile) => !usable.some((artifact) => profileFromArtifactName(artifact.name) === profile));
