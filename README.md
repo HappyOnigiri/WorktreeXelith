@@ -1,5 +1,7 @@
 # Worktree Xelith
 
+![Worktree Xelith logo against a tree and clouds](.github/readme-hero.webp)
+
 English | [日本語](README.ja.md) | [简体中文](README.zh-CN.md)
 
 Run Claude Code or Codex in a separate Git worktree with a single command.
