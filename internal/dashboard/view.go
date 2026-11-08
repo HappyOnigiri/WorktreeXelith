@@ -217,7 +217,12 @@ func (m model) updateLines() []string {
 		marker = accent + "❯ " + reset
 		label = accent + label + reset
 	}
-	return []string{"", truncate(marker+label, m.width), dim + truncate("  "+m.opts.Update.URL, m.width) + reset}
+	command := formatCommand(Action{Args: append([]string{updateMenuItem.command}, updateMenuItem.defaultArgs...)})
+	return []string{
+		"", truncate(marker+label, m.width),
+		dim + truncate("  "+m.opts.Update.URL, m.width) + reset,
+		dim + truncate("  "+command, m.width) + reset,
+	}
 }
 
 func (m model) operationView() []string {
@@ -374,6 +379,13 @@ func (m model) descriptionLines(width int) []string {
 		}
 		meta := items[m.selected]
 		lines := []string{soft + m.settingDisplayName(meta) + reset, dim + meta.Key + " · " + string(meta.Kind) + reset, ""}
+		preview := m
+		preview.pending = menuItem{command: "config"}
+		preview.input, preview.editOp = "", config.EditSet
+		preview.target = m.configEnvironments()[m.settingsEnv].target
+		preview.finishPending()
+		preview.result.Args = preview.result.Args[:len(preview.result.Args)-1]
+		lines = append(lines, m.commandLines(preview.result, width)...)
 		lines = append(lines, wrap(m.settingDescription(meta), width)...)
 		lines = append(lines, "", warn+m.t("dashboard.impact")+reset)
 		lines = append(lines, wrap(m.settingImpact(meta), width)...)
@@ -388,6 +400,7 @@ func (m model) descriptionLines(width int) []string {
 		if m.selected < len(steps) {
 			step := steps[m.selected]
 			lines := []string{soft + m.msg(step.Title) + reset, dim + step.ID + " · " + m.setupStateLabel(step.State) + reset, ""}
+			lines = append(lines, m.commandLines(Action{Args: []string{"setup", "--item", step.ID}}, width)...)
 			lines = append(lines, wrap(m.msg(step.Detail), width)...)
 			if step.Target != "" {
 				lines = append(lines, "", warn+m.t("dashboard.target_file")+reset, dim+step.Target+reset)
@@ -407,6 +420,8 @@ func (m model) descriptionLines(width int) []string {
 
 func (m model) menuDescription(item menuItem, width int) []string {
 	lines := []string{soft + m.t(item.labelID) + reset, ""}
+	args := append([]string{item.command}, item.defaultArgs...)
+	lines = append(lines, m.commandLines(Action{Args: args}, width)...)
 	lines = append(lines, wrap(m.t(item.descriptionID), width)...)
 	lines = append(lines, "", warn+m.t("dashboard.behavior")+reset)
 	lines = append(lines, wrap(m.t(item.impactID), width)...)
@@ -448,7 +463,11 @@ func (m model) choiceView() []string {
 }
 
 func (m model) confirmView() []string {
-	lines := []string{accent + m.pendingLabel + reset, "", m.t("dashboard.confirm")}
+	preview := m
+	preview.finishPending()
+	lines := []string{accent + m.pendingLabel + reset, ""}
+	lines = append(lines, m.commandLines(preview.result, m.width)...)
+	lines = append(lines, m.t("dashboard.confirm"))
 	if m.tab == 2 {
 		meta := m.configItems()[m.selected]
 		current := m.environmentValues()[meta.Key]
