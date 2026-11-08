@@ -1,9 +1,9 @@
-# Worktree X
+# Worktree Xelith
 
 [English](README.md) | 日本語 | [简体中文](README.zh-CN.md)
 
 Claude Code や Codex を、コマンドひとつで専用の Git worktree に起動します。
-Worktree X（`wx`）が macOS 上の作業環境を準備・管理するので、元のリポジトリでブランチを切り替えずにエージェントへ作業を任せられます。
+Worktree Xelith（`wx`）が macOS 上の作業環境を準備・管理するので、元のリポジトリでブランチを切り替えずにエージェントへ作業を任せられます。
 
 ## 特長
 
@@ -17,7 +17,7 @@ Worktree X（`wx`）が macOS 上の作業環境を準備・管理するので�
 **Apple Silicon 搭載の macOS**、**Git**、および **Claude Code または Codex** が必要です。
 
 ```sh
-curl -fsSL https://github.com/HappyOnigiri/WorktreeX/releases/latest/download/install.sh | bash
+curl -fsSL https://github.com/HappyOnigiri/WorktreeXelith/releases/latest/download/install.sh | bash
 ```
 
 ## 使い方
@@ -58,7 +58,7 @@ wx codex resume
 ## アンインストール
 
 ```sh
-curl -fsSL https://github.com/HappyOnigiri/WorktreeX/releases/latest/download/uninstall.sh | bash
+curl -fsSL https://github.com/HappyOnigiri/WorktreeXelith/releases/latest/download/uninstall.sh | bash
 ```
 
 wx が管理する worktree（未保存の作業を含む）・hook・LaunchAgent・設定ファイル・実行ファイルを削除します。
@@ -66,5 +66,5 @@ wx が管理する worktree（未保存の作業を含む）・hook・LaunchAgen
 ## コントリビュート
 
 コントリビュートを歓迎します！
-不具合報告やアイデアは [Issues](https://github.com/HappyOnigiri/WorktreeX/issues) へ、改善は [Pull Request](https://github.com/HappyOnigiri/WorktreeX/pulls) でお寄せください。
+不具合報告やアイデアは [Issues](https://github.com/HappyOnigiri/WorktreeXelith/issues) へ、改善は [Pull Request](https://github.com/HappyOnigiri/WorktreeXelith/pulls) でお寄せください。
 ドキュメントの改善や翻訳も歓迎です。
