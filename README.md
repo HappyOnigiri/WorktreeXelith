@@ -1,6 +1,6 @@
 # Worktree Xelith
 
-![Worktree Xelith logo against a tree and clouds](.github/readme-hero.webp)
+[![Worktree Xelith introduction video](.github/readme-hero-en.gif)](.github/worktree-xelith-en.mp4)
 
 English | [日本語](README.ja.md) | [简体中文](README.zh-CN.md)
 
