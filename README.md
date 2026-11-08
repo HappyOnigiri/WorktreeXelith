@@ -1,6 +1,6 @@
 # Worktree Xelith
 
-![A winged figure holding a glowing crystal above a temple](.github/readme-hero.webp)
+![Worktree Xelith logo against a tree and clouds](.github/readme-hero.webp)
 
 English | [日本語](README.ja.md) | [简体中文](README.zh-CN.md)
 
