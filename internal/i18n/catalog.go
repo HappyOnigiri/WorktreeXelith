@@ -123,6 +123,7 @@ var catalog = map[string]Entry{
 	"dashboard.scope":                 {EN: "Scope: {{.Scope}}", JA: "スコープ: {{.Scope}}"},
 	"dashboard.effective_settings":    {EN: "Effective settings", JA: "実効設定"},
 	"dashboard.impact":                {EN: "Impact", JA: "影響"},
+	"dashboard.command":               {EN: "Command", JA: "コマンド"},
 	"dashboard.behavior":              {EN: "Behavior", JA: "動作"},
 	"dashboard.attention":             {EN: "Attention", JA: "注意"},
 	"dashboard.target_file":           {EN: "File wx reads and writes", JA: "wx が読み書きするファイル"},

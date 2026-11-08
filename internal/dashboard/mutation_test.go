@@ -534,12 +534,12 @@ func TestMutationUpdateLinesHighlightsOnlySelectedUpdate(t *testing.T) {
 	m.width = 100
 	m.opts.Update = UpdateInfo{Available: true, Version: "v1.2.3", URL: "https://example.test/update"}
 	label := m.tf("dashboard.update.available", map[string]any{"Version": "v1.2.3"})
-	wantSelected := []string{"", accent + "❯ " + reset + accent + label + reset, dim + "  https://example.test/update" + reset}
+	wantSelected := []string{"", accent + "❯ " + reset + accent + label + reset, dim + "  https://example.test/update" + reset, dim + "  wx update --apply" + reset}
 	if got := m.updateLines(); !slices.Equal(got, wantSelected) {
 		t.Fatalf("selected update lines=%q, want %q", got, wantSelected)
 	}
 	m.selected = 1
-	wantUnselected := []string{"", "  " + label, dim + "  https://example.test/update" + reset}
+	wantUnselected := []string{"", "  " + label, dim + "  https://example.test/update" + reset, dim + "  wx update --apply" + reset}
 	if got := m.updateLines(); !slices.Equal(got, wantUnselected) {
 		t.Fatalf("unselected update lines=%q, want %q", got, wantUnselected)
 	}
