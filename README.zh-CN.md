@@ -1,5 +1,7 @@
 # Worktree Xelith
 
+![树木和云朵背景上的 Worktree Xelith 标志](.github/readme-hero.webp)
+
 [English](README.md) | [日本語](README.ja.md) | 简体中文
 
 只需一条命令，即可在独立的 Git worktree 中启动 Claude Code 或 Codex。
