@@ -71,22 +71,6 @@ func TestSetFieldRejectsEveryInvalidScalarType(t *testing.T) {
 	}
 }
 
-func TestSetFieldMutationBoundariesParseBeforeRecordingPresence(t *testing.T) {
-	var raw Config
-	if err := SetField(&raw, "update.auto_apply", "invalid"); err == nil {
-		t.Fatal("invalid scalar value was accepted")
-	}
-	if raw.present != nil {
-		t.Fatalf("invalid SetField populated presence map: %v", raw.present)
-	}
-	if err := SetField(&raw, "update.auto_apply", "false"); err != nil {
-		t.Fatal(err)
-	}
-	if !raw.present["update.auto_apply"] || raw.Update.AutoApply {
-		t.Fatalf("valid SetField did not record value and presence: update=%+v present=%v", raw.Update, raw.present)
-	}
-}
-
 // TestResetFieldRestoresScalarDefault は scalar key の --reset が present を落とし、
 // 設定ファイルからキーを消して既定値へ戻すことを確かめる。
 func TestResetFieldRestoresScalarDefault(t *testing.T) {

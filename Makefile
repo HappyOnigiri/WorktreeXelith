@@ -23,9 +23,6 @@ GOSEC_VERSION ?= v2.29.0
 GITLEAKS_VERSION ?= v8.30.1
 GO_LICENSES_VERSION ?= v2.0.1
 CYCLONEDX_VERSION ?= v1.12.0
-GREMLINS_VERSION ?= v0.6.0
-MUTATION_WEIGHT_FILE ?= .github/scripts/mutation-weights.json
-MUTATION_ARTIFACT_DIR ?= artifacts/mutation
 MARKDOWNLINT_VERSION ?= 0.23.2
 ZIZMOR_VERSION ?= 1.30.0
 SHELLCHECK_VERSION ?= 0.11.0
@@ -45,7 +42,7 @@ LICENSE_ALLOWLIST := Apache-2.0,BSD-2-Clause,BSD-3-Clause,ISC,MIT,MPL-2.0,Unicod
 # 汎用ルールではこの信頼境界を表せないため、明示実行するgosecだけで除外する。
 GOSEC_EXCLUDES := G104,G115,G202,G204,G302,G304,G306
 
-.PHONY: setup setup-hooks setup-go-tools setup-external-tools setup-security-tools setup-sbom-tools setup-markdownlint setup-zizmor setup-mutation-tools check-shellcheck build install fmt fmt-check vet lint deadcode mod-tidy-check generated-check docs-check comments-check tests-check lines-check testlayout-check fuzz-check gitexec-check migrations-check automation-check docs-index-check catalog-check display-check findings-check workflow-check workflow-lint reporter-check mutation-check mutation-weights workflow-security-audit shell-check static-check test test-race test-race-daemon test-race-daemon-0 test-race-daemon-1 test-race-rest test-race-rest-0 test-race-rest-1 test-race-weights ci-test-race test-coverage test-race-coverage coverage-check portable-test test-focus test-darwin check-fast concurrency-test build-darwin reproducible-build version-check smoke govulncheck dependency-check gosec license-check secret-check sbom security-local ci ci-checks hook-pre-commit hook-plan nightly-race fuzz fault-check crash-check soak-check resource-leak-check clean
+.PHONY: setup setup-hooks setup-go-tools setup-external-tools setup-security-tools setup-sbom-tools setup-markdownlint setup-zizmor check-shellcheck build install fmt fmt-check vet lint deadcode mod-tidy-check generated-check docs-check comments-check tests-check lines-check testlayout-check fuzz-check gitexec-check migrations-check automation-check docs-index-check catalog-check display-check findings-check workflow-check workflow-lint reporter-check workflow-security-audit shell-check static-check test test-race test-race-daemon test-race-daemon-0 test-race-daemon-1 test-race-rest test-race-rest-0 test-race-rest-1 test-race-weights ci-test-race test-coverage test-race-coverage coverage-check portable-test test-focus test-darwin check-fast concurrency-test build-darwin reproducible-build version-check smoke govulncheck dependency-check gosec license-check secret-check sbom security-local ci ci-checks hook-pre-commit hook-plan nightly-race fuzz fault-check crash-check soak-check resource-leak-check clean
 
 setup: setup-go-tools setup-external-tools
 
@@ -90,10 +87,6 @@ setup-zizmor:
 	else \
 	  echo "uv or pipx is required to install zizmor"; exit 1; \
 	fi
-
-setup-mutation-tools:
-	mkdir -p "$(TOOLS_BIN)"
-	GOBIN="$(TOOLS_BIN)" $(GO) install github.com/go-gremlins/gremlins/cmd/gremlins@$(GREMLINS_VERSION)
 
 check-shellcheck:
 	command -v shellcheck >/dev/null
@@ -242,34 +235,6 @@ workflow-lint:
 reporter-check:
 	command -v node >/dev/null
 	node --test .github/scripts/report-flaky-tests.test.cjs
-	node --test .github/scripts/mutation-plan.test.cjs
-	node --test .github/scripts/report-mutants.test.cjs
-
-# Gremlinsは結果をissueへ記録する手動検査なので、通常のCI依存閉包には入れない。
-mutation-check:
-	@test -n "$(PKG)" || { echo "PKG is required; e.g. make mutation-check PKG=./internal/config"; exit 1; }
-	@case "$(PKG)" in ./internal/fdexec|internal/fdexec) echo "internal/fdexec is excluded from Mutation Hunt: process/OS adapter (unix.Close, unix.Exec, os.Exit)"; exit 1;; esac
-	@test -z "$(FILE)" || test -z "$(MUTATION_ID)" || { echo "FILE and MUTATION_ID are mutually exclusive"; exit 1; }
-	@test -x "$(TOOLS_BIN)/gremlins" || { echo "pinned gremlins is missing; run make setup-mutation-tools"; exit 1; }
-	@set -eu; \
-	package="$(PKG)"; profile="$${package#./}"; \
-	result="artifacts/mutation/local-$${profile//\//-}.json"; \
-	manifest="artifacts/mutation/local-$${profile//\//-}/manifest.json"; \
-	mkdir -p "$$(dirname "$$manifest")"; \
-	args=(unleash "$$package" -o "$$result" --workers 2 --timeout-coefficient 12 \
-		--arithmetic-base=false --conditionals-boundary=true --conditionals-negation=false \
-		--increment-decrement=true --invert-negatives=false --invert-assignments=false \
-		--invert-bitwise=false --invert-bwassign=false --invert-logical=false \
-		--invert-loopctrl=false --remove-self-assignments=false); \
-	"$(TOOLS_BIN)/gremlins" "$${args[@]}"; \
-	command_string="gremlins $${args[*]}"; \
-	$(GO) run ./tools/mutationreport -root "$(CURDIR)" -profile "$$profile" -input "$$result" \
-		-output "$$manifest" -exclusions "$(CURDIR)/mutation-exclusions.txt" -command "$$command_string" \
-		-mutators boundary $(if $(FILE),-file "$(FILE)",) $(if $(MUTATION_ID),-mutation-id "$(MUTATION_ID)",) -fail-on-survivors
-
-# full runのartifactから実測時間を集計し、次回のplanへ手動で持ち込む重みを作る。
-mutation-weights:
-	$(GO) run ./tools/mutationweights -artifacts "$(MUTATION_ARTIFACT_DIR)" -output "$(MUTATION_WEIGHT_FILE)"
 
 workflow-security-audit: setup-zizmor
 	@test -x "$(TOOLS_BIN)/zizmor" || { echo "pinned zizmor is missing; run make setup-zizmor"; exit 1; }

@@ -171,10 +171,10 @@ func TestListTreeLeavesPropagatesTreeError(t *testing.T) {
 	p, repo, oid, _ := cowFixture(t)
 	treeOID := cowGit(t, string(repo.MainPath), "rev-parse", oid+"^{tree}")
 	objectPath := filepath.Join(string(repo.CommonDir), "objects", treeOID[:2], treeOID[2:])
-	if err := os.Rename(objectPath, objectPath+".mutation-test"); err != nil {
+	if err := os.Rename(objectPath, objectPath+".renamed-away"); err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { _ = os.Rename(objectPath+".mutation-test", objectPath) })
+	t.Cleanup(func() { _ = os.Rename(objectPath+".renamed-away", objectPath) })
 	if _, err := p.ListTreeLeaves(ctx, repo, oid); err == nil {
 		t.Fatal("tree enumeration error was ignored")
 	}
