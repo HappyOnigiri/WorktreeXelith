@@ -33,16 +33,15 @@ jobs:
       - name: Install markdown checker
         run: make setup-markdownlint
       - name: Install pinned ShellCheck
-        env:
-          SHELLCHECK_SHA256: 8c3be12b05d5c177a04c29e3c78ce89ac86f1595681cab149b65b97c4e227198
         run: |
-          curl --fail --location --silent --show-error \
-            --retry 5 --retry-all-errors --retry-delay 5 --retry-max-time 60 \
-            https://github.com/koalaman/shellcheck/releases/download/v0.11.0/shellcheck-v0.11.0.linux.x86_64.tar.xz \
-            --output /tmp/shellcheck.tar.xz
-          echo "$SHELLCHECK_SHA256  /tmp/shellcheck.tar.xz" | sha256sum --check
-          tar -C /tmp -xf /tmp/shellcheck.tar.xz
-          sudo install -m 0755 /tmp/shellcheck-v0.11.0/shellcheck /usr/local/bin/shellcheck
+          image="koalaman/shellcheck:v0.11.0@sha256:61862eba1fcf09a484ebcc6feea46f1782532571a34ed51fedf90dd25f925a8d"
+          docker pull "$image"
+          container_id="$(docker create "$image")"
+          trap 'docker rm -f "$container_id" >/dev/null 2>&1 || true' EXIT
+          docker cp "$container_id:/bin/shellcheck" /tmp/shellcheck
+          docker rm "$container_id"
+          trap - EXIT
+          sudo install -m 0755 /tmp/shellcheck /usr/local/bin/shellcheck
       # 個別targetを並べるとci-checks側との差が生まれ、tests-checkのように適用漏れが起きる。
       - run: make static-check
       - name: Verify read-only check
