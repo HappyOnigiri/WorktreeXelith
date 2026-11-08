@@ -761,3 +761,9 @@ func gitCommand(t *testing.T, dir string, args ...string) string {
 	}
 	return strings.TrimSpace(string(output))
 }
+
+func gitCommandExpectFailure(dir string, args ...string) error {
+	command := exec.Command("git", args...)
+	command.Dir = dir
+	return command.Run()
+}
