@@ -7,9 +7,12 @@ Worktree Xelith（`wx`）负责在 macOS 上准备和管理工作环境，让你
 
 ## 特性
 
-- **独立的工作环境** — 智能体在 detached HEAD 状态的 Git worktree 中工作，不会更改原工作区的 HEAD、暂存区和已跟踪文件。
-- **随时开始工作** — 后台守护进程会为最近使用的仓库预先准备工作环境。
+- **独立的工作环境** — 智能体在 detached HEAD 状态的 Git worktree 中工作，不会更改原工作区的 HEAD、暂存区和已跟踪文件。由于不占用分支，你仍可在原仓库中切换到同一分支。
+- **随时开始工作** — 可以选择预先准备工作环境的 Hot Standby，或按需创建的 Cold Start。
 - **节省磁盘空间** — 利用 APFS 的 Copy on Write，与原工作区中内容相同的文件共享数据，减少 worktree 的磁盘占用。
+- **开发环境设置** — 首次使用时，可让智能体配置文件复制、共享链接和准备步骤，再通过构建与测试验证环境。
+- **支持多个仓库** — 从父目录启动，即可将其下各仓库的 worktree 一起准备在同一个 workspace 中。
+- **自动保存与清理** — 智能体正常退出后，wx 会将工作状态保存为快照，并按各自的保留设置清理 worktree 和快照。
 - **熟悉的命令** — 直接使用 Claude Code 或 Codex 的常用参数，也可以指定起始分支。
 
 ## 安装
@@ -19,6 +22,8 @@ Worktree Xelith（`wx`）负责在 macOS 上准备和管理工作环境，让你
 ```sh
 curl -fsSL https://github.com/HappyOnigiri/WorktreeXelith/releases/latest/download/install.sh | bash
 ```
+
+安装后会打开交互式设置，可配置智能体的 hook、后台守护进程等。
 
 ## 快速开始
 
@@ -30,6 +35,8 @@ wx codex
 ```
 
 所选智能体会在 wx 管理的 worktree 中启动。
+首次在仓库中启动时，选择准备策略并检查环境。确认结果后，可让智能体完成 Git 未跟踪文件的配置和仓库所需的准备步骤。
+
 `claude` 或 `codex` 后面的参数会原样传递给智能体，但在 `--` 之前的
 `--branch <branch|repo=branch>` 或 `--branch=<branch|repo=branch>` 会由 wx 处理。
 要指定起始分支，可以将 wx 选项放在智能体名称之前或之后：
@@ -47,8 +54,13 @@ wx claude --resume
 wx codex resume
 ```
 
+如果保存的工作状态仍可用，wx 会将其恢复到继续使用的会话中。快照包含提交、已暂存和未暂存的更改，以及 Git 未忽略的未跟踪文件。
+快照的保留期限和保存范围有限；需要长期保留的成果，请提交并 push。
+
 ## 更多功能
 
+- **管理界面：** 不带参数运行 `wx`，即可查看 workspace 和 worktree 的状态。
+- **运行其他工具：** `wx shell` 可启动 shell，`wx run <command>` 可运行任意命令；它们在受管理的 worktree 中运行，退出时自动归还 worktree。
 - **状态与诊断：** `wx status`、`wx doctor`。
 - **会话管理与清理：** `wx slots`、`wx resume`、`wx gc --dry-run`、`wx clear`。
 - **配置：** 使用 `wx config` 查看配置或修改单个配置值。
