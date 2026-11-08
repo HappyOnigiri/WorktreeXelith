@@ -1,5 +1,7 @@
 # Worktree Xelith
 
+![木と雲を背景にした Worktree Xelith のロゴ](.github/readme-hero.webp)
+
 [English](README.md) | 日本語 | [简体中文](README.zh-CN.md)
 
 Claude Code や Codex を、コマンドひとつで専用の Git worktree に起動します。
