@@ -1,6 +1,6 @@
 # Worktree Xelith
 
-![木と雲を背景にした Worktree Xelith のロゴ](.github/readme-hero.webp)
+[![Worktree Xelith の紹介動画](.github/readme-hero-ja.gif)](.github/worktree-xelith-ja.mp4)
 
 [English](README.md) | 日本語 | [简体中文](README.zh-CN.md)
 

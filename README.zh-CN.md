@@ -1,6 +1,6 @@
 # Worktree Xelith
 
-![树木和云朵背景上的 Worktree Xelith 标志](.github/readme-hero.webp)
+[![Worktree Xelith 介绍视频](.github/readme-hero-en.gif)](.github/worktree-xelith-en.mp4)
 
 [English](README.md) | [日本語](README.ja.md) | 简体中文
 
