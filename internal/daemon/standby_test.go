@@ -43,7 +43,8 @@ func TestStandbyTreatsWorkspaceWithInFlightLeaseAsHot(t *testing.T) {
 				t.Fatal(err)
 			}
 			defer store.Close()
-			m := New(cfg, store, slog.New(slog.NewTextHandler(io.Discard, nil)))
+			// 起動時保守との予約競合を避け、ensureStandby の判断を単独で検証する。
+			m := newManager(cfg, store, slog.New(slog.NewTextHandler(io.Discard, nil)))
 			defer m.Close()
 			ctx := context.Background()
 			w, err := (&discovery.Discoverer{Git: m.git, Config: cfg}).Resolve(ctx, repo)
