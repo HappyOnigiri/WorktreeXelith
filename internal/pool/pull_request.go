@@ -152,7 +152,7 @@ func pullRequestURL(raw string) (string, string, error) {
 		return "", "", fmt.Errorf("invalid GitHub pull request URL %q", raw)
 	}
 	parts := strings.Split(strings.TrimSuffix(u.Path, "/"), "/")
-	if len(parts) != 5 || parts[0] != "" || parts[1] == "" || parts[2] == "" || parts[3] != "pull" {
+	if len(parts) < 5 || parts[0] != "" || parts[1] == "" || parts[2] == "" || parts[3] != "pull" {
 		return "", "", fmt.Errorf("invalid GitHub pull request URL %q", raw)
 	}
 	number, err := pullRequestNumber(parts[4])
