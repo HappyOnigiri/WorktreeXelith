@@ -44,11 +44,14 @@ func TestPullRequestNormalization(t *testing.T) {
 			t.Errorf("accepted %s", raw)
 		}
 	}
-	identity, number, err := pullRequestURL("https://github.com/Owner/Repo/pull/007/?query=x=y#fragment")
-	if err != nil || identity != "owner/repo" || number != "7" {
-		t.Fatalf("URL: %s %s %v", identity, number, err)
+	for _, suffix := range []string{"", "/", "#fragment", "/?query=x=y#fragment", "/changes", "/files", "/commits/commit", "/changes#fragment", "/files/?query=x=y#fragment"} {
+		raw := "https://github.com/Owner/Repo/pull/007" + suffix
+		identity, number, err := pullRequestURL(raw)
+		if err != nil || identity != "owner/repo" || number != "7" {
+			t.Errorf("%s: %s %s %v", raw, identity, number, err)
+		}
 	}
-	for _, raw := range []string{"https://github.com/o/r/pull/0", "https://github.com/o/r/pull/-1", "https://github.com/o/r/pull/+1", "https://github.com/o/r/pull/1/files", "http://github.com/o/r/pull/1", "https://enterprise.example/o/r/pull/1", "https://github.com/o/r/pull/18446744073709551616"} {
+	for _, raw := range []string{"https://github.com/o/r/pull", "https://github.com/o/r/pull//changes", "https://github.com/o/r/pull/0/changes#fragment", "https://github.com/o/r/pull/-1", "https://github.com/o/r/pull/+1", "https://github.com/o/r/pull/1extra/files", "http://github.com/o/r/pull/1", "https://enterprise.example/o/r/pull/1", "https://github.com/o/r/pull/18446744073709551616"} {
 		if _, _, err := pullRequestURL(raw); err == nil {
 			t.Errorf("accepted %s", raw)
 		}
@@ -142,7 +145,7 @@ func TestPullRequestsCombineRepositoriesAndQualifiedBranch(t *testing.T) {
 	git(t, string(c.MainPath), "config", "remote.pushonly.pushurl", "git@example.com:owner/c.git")
 	git(t, string(c.MainPath), "branch", "feature")
 	w := discovery.Workspace{Repositories: []discovery.Repository{a, b, c}}
-	for _, specs := range [][]string{{"a=7", "https://github.com/owner/b/pull/7"}, {"https://github.com/owner/a/pull/7/?x=y#z", "https://github.com/owner/b/pull/7"}} {
+	for _, specs := range [][]string{{"a=7", "https://github.com/owner/b/pull/7"}, {"https://github.com/owner/a/pull/7/changes?x=y#z", "https://github.com/owner/b/pull/7#fragment"}} {
 		bases, err := ResolvePullRequests(context.Background(), &gitx.Runner{}, w, []string{"c=feature"}, nil, specs, nil)
 		if err != nil {
 			t.Fatal(err)
