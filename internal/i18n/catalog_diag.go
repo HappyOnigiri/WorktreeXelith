@@ -194,6 +194,8 @@ var diagCatalog = map[string]Entry{
 	"diag.detail.lfs_candidate":              {EN: "object {{.OID}} ({{.Size}}): size-matching source candidate {{.Path}}; hash will be verified during preparation", JA: "object {{.OID}}（{{.Size}}）：size が一致する source 候補 {{.Path}}。hash は準備中に検証します"},
 	"diag.detail.lfs_missing":                {EN: "object {{.OID}} ({{.Size}}): no size-matching source candidate", JA: "object {{.OID}}（{{.Size}}）：size が一致する source 候補がありません"},
 	"diag.detail.lfs_checked":                {EN: "{{.Count}} LFS object(s) checked", JA: "LFS object {{.Count}} 件を検査しました"},
+	"diag.detail.lfs_omitted":                {EN: "{{.Count}} more LFS object(s) omitted", JA: "ほか LFS object {{.Count}} 件は省略しました"},
+	"diag.detail.lfs_fetch_excluded":         {EN: "{{.Count}} LFS path(s) excluded by lfs.fetchinclude/fetchexclude stay as pointers", JA: "lfs.fetchinclude/fetchexclude で除外された LFS path {{.Count}} 件は pointer のまま置きます"},
 
 	// diag.job.* は失敗した job の原因を、記録されている項目の有無で組み立てる。
 	// Operation は呼び出し側が作る入れ子 message で、Reason は記録された失敗理由の原文である。

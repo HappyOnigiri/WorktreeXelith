@@ -148,6 +148,11 @@ checkout 後は LFS path が pointer text のまま残っていないかを size
 不完全な path が一つでもあれば準備を失敗させ、書込み後の既存の隔離経路で slot を貸し出さない。
 early-ready は設計上の部分 worktree なので、この完全性検証は残りの checkout 後だけに行う。
 
+`lfs.fetchinclude`・`lfs.fetchexclude` で除外された path は、上の修復・完全性検証・cache の必要量のいずれの対象にもしない。
+git-lfs の smudge はこれらの path を cache の有無に関係なく pointer のまま書くので、実体化を要求すると LFS 実体を取得しない運用の repository が準備できなくなるためである。
+設定は git-lfs と同じく key ごとに git config を優先し、無い key だけ要求 OID の `.lfsconfig` から読む。
+pattern の照合は `git lfs ls-files` に任せ、wx は gitignore 形式の解釈を持たない。
+
 ignore判定は`git check-ignore`に委ねるので、ディレクトリを列挙するときは`/dir/*`でも`/dir/`でもなく`/dir`の形のruleが要る。
 末尾の`/`はディレクトリ限定を意味し、wxが置くのはsymlinkなので、source側が実体のディレクトリでignoreと判定されても配置先では無視されず省略になる。
 また配下にtracked fileを1つでも持つディレクトリは、ignoreを通せても対象にならない。tracked fileのcheckoutが実体を作り、次の宛先衝突で準備が失敗するためである。

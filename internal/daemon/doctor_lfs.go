@@ -46,7 +46,7 @@ func (m *Manager) lfsObjectFindings(ctx context.Context) []diag.Finding {
 				continue
 			}
 			if !lfsEstimateNeedsCheck(estimate) {
-				findings = append(findings, lfsObjectOKFinding(item.Repository, len(estimate.LFS)))
+				findings = append(findings, lfsObjectOKFinding(item.Repository, len(estimate.LFS), estimate.LFSFetchExcludedPaths))
 				continue
 			}
 			diagnostics, diagnosisErr := workspace.DiagnoseLFSObjects(item.Repository, estimate.LFS)
@@ -54,7 +54,7 @@ func (m *Manager) lfsObjectFindings(ctx context.Context) []diag.Finding {
 				findings = append(findings, lfsObjectUncheckedFinding(string(item.Repository.MainPath), diagnosisErr))
 				continue
 			}
-			findings = append(findings, lfsObjectFinding(item.Repository, diagnostics))
+			findings = append(findings, lfsObjectFinding(item.Repository, diagnostics, estimate.LFSFetchExcludedPaths))
 		}
 	}
 	if len(findings) == 0 {
@@ -71,9 +71,13 @@ func lfsEstimateNeedsCheck(estimate workspace.CapacityEstimate) bool {
 	return len(estimate.LFS) > 0 && estimate.MissingLFSObjects > 0
 }
 
-func lfsObjectFinding(repo discovery.Repository, diagnostics workspace.LFSObjectDiagnostics) diag.Finding {
+// maxLFSObjectDetails は finding に載せる object ごとの detail の上限である。
+// 欠落が数十万件の repository では detail だけで RPC frame の上限を超え、doctor 全体が応答できなくなる。
+const maxLFSObjectDetails = 20
+
+func lfsObjectFinding(repo discovery.Repository, diagnostics workspace.LFSObjectDiagnostics, fetchExcluded int) diag.Finding {
 	if len(diagnostics.Objects) == 0 {
-		return lfsObjectOKFinding(repo, 0)
+		return lfsObjectOKFinding(repo, 0, fetchExcluded)
 	}
 	repairable := 0
 	bytes := int64(0)
@@ -85,13 +89,23 @@ func lfsObjectFinding(repo discovery.Repository, diagnostics workspace.LFSObject
 		candidate := diagnostic.CandidatePath
 		if candidate != "" {
 			repairable++
+			if len(details) >= maxLFSObjectDetails {
+				continue
+			}
 			details = append(details, fmt.Sprintf("object %s (%s): size-matching source candidate %s; hash will be verified during preparation", diagnostic.Object.OID, textfmt.HumanBytes(diagnostic.Object.Size), filepath.Join(string(repo.MainPath), candidate)))
 			detailMessages = append(detailMessages, message("diag.detail.lfs_candidate", "OID", diagnostic.Object.OID, "Size", textfmt.HumanBytes(diagnostic.Object.Size), "Path", filepath.Join(string(repo.MainPath), candidate)))
 			continue
 		}
 		missing = append(missing, diagnostic)
+		if len(details) >= maxLFSObjectDetails {
+			continue
+		}
 		details = append(details, fmt.Sprintf("object %s (%s): no size-matching source candidate", diagnostic.Object.OID, textfmt.HumanBytes(diagnostic.Object.Size)))
 		detailMessages = append(detailMessages, message("diag.detail.lfs_missing", "OID", diagnostic.Object.OID, "Size", textfmt.HumanBytes(diagnostic.Object.Size)))
+	}
+	if omitted := len(diagnostics.Objects) - len(details); omitted > 0 {
+		details = append(details, fmt.Sprintf("%d more LFS object(s) omitted", omitted))
+		detailMessages = append(detailMessages, message("diag.detail.lfs_omitted", "Count", omitted))
 	}
 	if len(missing) == 0 {
 		return diag.Finding{
@@ -123,16 +137,26 @@ func lfsObjectFinding(repo discovery.Repository, diagnostics workspace.LFSObject
 	}
 }
 
-func lfsObjectOKFinding(repo discovery.Repository, count int) diag.Finding {
+func lfsObjectOKFinding(repo discovery.Repository, count, fetchExcluded int) diag.Finding {
+	details := []string{strconv.Itoa(count) + " LFS object(s) checked"}
+	detailMessages := []i18n.Message{message("diag.detail.lfs_checked", "Count", count)}
+	if fetchExcluded > 0 {
+		details = append(details, lfsFetchExcludedDetail(fetchExcluded))
+		detailMessages = append(detailMessages, message("diag.detail.lfs_fetch_excluded", "Count", fetchExcluded))
+	}
 	return diag.Finding{
 		Check: diag.CheckLFSObjects, Severity: diag.SeverityOK, Target: string(repo.MainPath),
 		Summary: "the repository LFS cache objects are present with the expected sizes",
-		Details: []string{strconv.Itoa(count) + " LFS object(s) checked"},
+		Details: details,
 		Messages: diag.FindingMessages{
 			Summary: message("diag.lfs_objects.ok"),
-			Details: []i18n.Message{message("diag.detail.lfs_checked", "Count", count)},
+			Details: detailMessages,
 		},
 	}
+}
+
+func lfsFetchExcludedDetail(count int) string {
+	return fmt.Sprintf("%d LFS path(s) excluded by lfs.fetchinclude/fetchexclude stay as pointers", count)
 }
 
 func lfsObjectUncheckedFinding(target string, err error) diag.Finding {
