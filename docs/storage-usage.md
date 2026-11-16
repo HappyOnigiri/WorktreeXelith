@@ -75,6 +75,7 @@ Disk行に付く`managed`は管理対象であることを示し、専有分と�
 準備を始める前に、要求された tree を checkout したとき確実に書かれる bytes の下限を見積もり、worktree root と repository の Git common directory を volume ごとに空き容量と比較する。
 LFS の `filter` 属性が付いた path は tree にある pointer の大きさではなく、pointer が示す展開後の object size を worktree 側へ積む。
 common directory の LFS cache に無い object は、その object size を cache 側の必要量として別に積む。
+LFS の fetch 設定で除外され pointer のまま置かれる path は、pointer の大きさだけを worktree 側へ積む。
 同じ object を複数 path が参照しても cache の書込みは一度だけ数える。
 欠落・size 不一致の object は、準備前に source working tree の実体を OID と size で検証して cache へ修復する。
 候補の探索と修復の詳細、修復できない場合の扱いは [worktreeのコピーとリンク](worktree-copy.md) の LFS cache 節に従う。

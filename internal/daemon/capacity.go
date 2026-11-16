@@ -93,9 +93,13 @@ func (e *MissingLFSObjectsError) Error() string {
 	if e.Err != nil {
 		return ErrMissingLFSObjects.Error() + ": " + e.Err.Error()
 	}
-	parts := make([]string, 0, len(e.Failures))
-	for _, failure := range e.Failures {
+	// job の error_message と CLI のエラーへ載るため、doctor の detail と同じ件数で打ち切る。
+	parts := make([]string, 0, min(len(e.Failures), maxLFSObjectDetails)+1)
+	for _, failure := range e.Failures[:min(len(e.Failures), maxLFSObjectDetails)] {
 		parts = append(parts, failure.Error())
+	}
+	if omitted := len(e.Failures) - maxLFSObjectDetails; omitted > 0 {
+		parts = append(parts, fmt.Sprintf("%d more LFS object(s) omitted", omitted))
 	}
 	if len(parts) == 0 {
 		return ErrMissingLFSObjects.Error()
@@ -243,10 +247,16 @@ func (m *Manager) checkPrepareCapacityWithEstimator(ctx context.Context, slot st
 // 設定・選択変更後の古い見積りを使わない。cache miss の同時重複は許容する。
 func (m *Manager) estimateCapacity(ctx context.Context, preparer *workspace.Preparer, cfg config.Config, repo discovery.Repository, oid string) (workspace.CapacityEstimate, error) {
 	oid = strings.TrimSpace(oid)
+	// .lfsconfig は要求 OID で決まるが、git config の fetch 設定は OID と独立に変わり得るため key に含める。
+	fetchFilter, err := preparer.LFSFetchFilterConfig(ctx, repo)
+	if err != nil {
+		return workspace.CapacityEstimate{}, err
+	}
 	key := strings.Join([]string{
 		string(repo.ID), oid,
 		cfg.CopyModeForWorkspaceRepository(preparer.WorkspaceRoot, repo.RelativePath, string(repo.MainPath)),
 		strconv.Itoa(cfg.COWMinSizeKiBForWorkspaceRepository(preparer.WorkspaceRoot, repo.RelativePath, string(repo.MainPath))),
+		fetchFilter.Include, fetchFilter.Exclude,
 	}, "\x00")
 	sparse, err := preparer.SparseCheckoutEnabled(ctx, repo)
 	if err != nil {

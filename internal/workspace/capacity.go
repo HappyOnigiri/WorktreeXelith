@@ -54,17 +54,20 @@ type LFSObjectInfo struct {
 // WorktreeBytes と LFSCacheBytes は異なる volume に載り得るので分けて返す。
 type CapacityEstimate struct {
 	// RepositoryID は daemon が同じ report の repository と LFS 内訳を対応付けるための内部値である。
-	RepositoryID      string          `json:"-"`
-	WorktreeBytes     int64           `json:"worktree_bytes"`
-	LFSCacheBytes     int64           `json:"lfs_cache_bytes"`
-	LFSExpandedBytes  int64           `json:"lfs_expanded_bytes"`
-	BlobBytes         int64           `json:"blob_bytes"`
-	TransformedBytes  int64           `json:"transformed_bytes"`
-	COWAvoidableBytes int64           `json:"cow_avoidable_bytes"`
-	LFSObjects        int             `json:"lfs_objects"`
-	MissingLFSObjects int             `json:"missing_lfs_objects"`
-	Sparse            bool            `json:"sparse"`
-	LFS               []LFSObjectInfo `json:"lfs,omitempty"`
+	RepositoryID      string `json:"-"`
+	WorktreeBytes     int64  `json:"worktree_bytes"`
+	LFSCacheBytes     int64  `json:"lfs_cache_bytes"`
+	LFSExpandedBytes  int64  `json:"lfs_expanded_bytes"`
+	BlobBytes         int64  `json:"blob_bytes"`
+	TransformedBytes  int64  `json:"transformed_bytes"`
+	COWAvoidableBytes int64  `json:"cow_avoidable_bytes"`
+	LFSObjects        int    `json:"lfs_objects"`
+	MissingLFSObjects int    `json:"missing_lfs_objects"`
+	// LFSFetchExcludedPaths は lfs.fetchinclude/fetchexclude により pointer のまま置く LFS path の数である。
+	// --json の形状を変えないよう内部値に留め、doctor の表示だけが読む。
+	LFSFetchExcludedPaths int             `json:"-"`
+	Sparse                bool            `json:"sparse"`
+	LFS                   []LFSObjectInfo `json:"lfs,omitempty"`
 }
 
 type capacityTreeEntry struct {
@@ -191,6 +194,10 @@ func (p *Preparer) EstimateCapacity(ctx context.Context, repo discovery.Reposito
 	if err != nil {
 		return CapacityEstimate{}, err
 	}
+	fetchExcluded, err := p.lfsFetchExcludedPaths(ctx, repo, oid, entries, lfsPaths)
+	if err != nil {
+		return CapacityEstimate{}, err
+	}
 	objects := map[string]*LFSObjectInfo{}
 	for _, entry := range entries {
 		result.BlobBytes = addBytes(result.BlobBytes, entry.Size)
@@ -200,6 +207,13 @@ func (p *Preparer) EstimateCapacity(ctx context.Context, repo discovery.Reposito
 		if lfsPaths[entry.Path] {
 			pointer, pointerOK := pointers[entry.OID]
 			written := entry.Size
+			if pointerOK && fetchExcluded[entry.Path] {
+				// git-lfs は fetch 設定で除外した path を cache の有無に関係なく pointer のまま書く。
+				// cache を要求せず、checkout 後の実体化検証の対象にもしない。
+				result.LFSFetchExcludedPaths++
+				result.WorktreeBytes = addBytes(result.WorktreeBytes, written)
+				continue
+			}
 			if pointerOK {
 				written = pointer.Size
 				result.LFSExpandedBytes = addBytes(result.LFSExpandedBytes, written)
