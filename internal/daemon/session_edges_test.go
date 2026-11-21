@@ -79,3 +79,68 @@ func TestAuxiliaryCodexLifecycleDoesNotReplaceOrReleasePrimary(t *testing.T) {
 		t.Fatalf("primary end state=%s err=%v", stored.State, err)
 	}
 }
+
+func TestClaudeClearKeepsLeaseAcrossHookOrder(t *testing.T) {
+	t.Parallel()
+	for _, test := range []struct {
+		name     string
+		endFirst bool
+	}{
+		{name: "SessionEnd first", endFirst: true},
+		{name: "SessionStart first"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			root := t.TempDir()
+			store, err := openTestStoreAtPath(t, filepath.Join(root, "state.db"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer store.Close()
+			ctx := context.Background()
+			session := state.Session{
+				ID: "claude", SlotID: "claude", State: "ACTIVE", AgentKind: "claude",
+				ClientPID: os.Getpid(), TokenHash: state.HashToken("token"),
+			}
+			if _, err := store.CreateSlotSession(ctx, storeSlotAt(t, store, root, "", "claude", filepath.Join(root, "claude"), 0, "LEASED"), nil, session, ""); err != nil {
+				t.Fatal(err)
+			}
+			manager := &Manager{store: store, jobQueue: newJobQueue(1), log: slog.New(slog.NewTextHandler(newDiagnosticLog(managerFixtureLogLimit), nil)), ctx: ctx}
+			handler := Handler{Manager: manager}
+			start := func(source, nativeID string) {
+				t.Helper()
+				result, err := handler.Handle(ctx, "BindAgentSession", JSON(map[string]string{
+					"session_id": session.ID, "token": "token", "source": source, "agent_session_id": nativeID,
+				}))
+				if err != nil || result.(map[string]any)["primary"] != true {
+					t.Fatalf("SessionStart(%s): result=%v err=%v", source, result, err)
+				}
+			}
+			end := func(nativeID string, matched bool) {
+				t.Helper()
+				result, err := handler.Handle(ctx, "Release", JSON(map[string]string{
+					"session_id": session.ID, "token": "token", "reason": "session-end-hook", "agent_session_id": nativeID,
+				}))
+				if err != nil || result.(map[string]bool)["released"] != matched {
+					t.Fatalf("SessionEnd(%s): result=%v err=%v, want match=%v", nativeID, result, err, matched)
+				}
+			}
+			start("startup", "native-before-clear")
+			if test.endFirst {
+				end("native-before-clear", true)
+			}
+			start("clear", "native-after-clear")
+			if !test.endFirst {
+				end("native-before-clear", false)
+			}
+			end("native-after-clear", true)
+			stored, err := store.SessionByID(ctx, session.ID)
+			if err != nil || stored.State != "ACTIVE" || stored.AgentSessionID != "native-after-clear" {
+				t.Fatalf("clear changed the active session: session=%+v err=%v", stored, err)
+			}
+			slot, err := store.Slot(ctx, session.SlotID)
+			if err != nil || slot.State != "LEASED" || slot.OwnerSessionID != session.ID {
+				t.Fatalf("clear changed the lease: slot=%+v err=%v", slot, err)
+			}
+		})
+	}
+}

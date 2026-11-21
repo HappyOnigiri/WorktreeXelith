@@ -115,12 +115,15 @@
    保存済み方針が`off`で`-n`を付けていない起動は、従来どおり素通しする。
 
    `wx hook session-start`はエージェント側のネイティブなセッションIDをwxのセッションへ結び付ける。
+   Claude Code の`/clear`では、同じwxセッションの紐付けを`SessionStart`の`source=clear`が示す新しいIDへ移す。
+   新しいIDが別のwxセッションに紐付いている場合は移さない。
    Codexのrewind / forkは、transcript metadataの`forked_from_id`とhook payloadの新IDを照合できた場合だけ旧IDから新IDへmappingを移管する。
    ACTIVEなroot sessionへCodexの別IDから`startup`または置換元を検証できない`fork`が届いた場合は、`btw`などが作る補助threadとして成功扱いにし、主threadのmappingを変更しない。
    RESTORING中に届いたIDは`pending_agent_session_id`として保持し、復元成功後に親から新しいセッションへ移譲する。
 
 4. **返却** — `wx hook session-end`が`Release`を呼ぶ。
-   Codexではhook payloadのネイティブなセッションIDが現在の主threadと一致する場合だけ返却し、補助threadの終了は状態を変えない。
+   hook payloadのネイティブなセッションIDが現在の紐付けと一致するときだけ返却へ進む。
+   この照合により、Codexの補助threadやClaude Codeの`/clear`で紐付けを移した旧IDの終了通知は貸出に影響しない。
    ただしsession-end hookはエージェント本体より先に走ることがあるため、clientまたはエージェントのプロセスが生きている間は返却しない。
    前面clientの終了通知か、daemonのorphan reconcileが「もう書き手がいない」ことを確認してから先へ進む。
 
