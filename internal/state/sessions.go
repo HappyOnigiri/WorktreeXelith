@@ -216,8 +216,8 @@ func (s *Store) BindAgentSession(ctx context.Context, id, agentID string, replac
 	return err
 }
 
-// BindAgentSessionFromHook は SessionStart の source を使い、主 Codex thread と同じ wx session で
-// 起動した補助 thread を mapping の競合ではなく no-op として扱う。primary=false は補助 thread を表す。
+// BindAgentSessionFromHook は SessionStart の source に応じて native ID を紐付ける。
+// Codex の補助 thread は紐付けを変更せず、primary=false を返す。
 func (s *Store) BindAgentSessionFromHook(ctx context.Context, id, agentID, source string, replaces ...string) (primary bool, err error) {
 	if len(replaces) > 1 {
 		return false, errors.New("at most one agent session replacement source is allowed")
@@ -237,9 +237,13 @@ func (s *Store) BindAgentSessionFromHook(ctx context.Context, id, agentID, sourc
 	if err := tx.QueryRowContext(ctx, `SELECT agent_kind,COALESCE(parent_session_id,''),state,COALESCE(pending_agent_session_id,''),COALESCE(agent_session_id,'') FROM sessions WHERE id=?`, id).Scan(&kind, &parent, &sessionState, &pending, &currentAgentID); err != nil {
 		return false, err
 	}
+	claudeClear := kind == "claude" && source == "clear" && replacesAgentID == ""
+	if claudeClear && currentAgentID != agentID {
+		// Claude の clear には旧 ID がないため、この transaction で読んだ ID を置換元にする。
+		replacesAgentID = currentAgentID
+	}
 	if replacesAgentID != "" {
-		// Rewind/fork は現在の native mapping を旧 ID と照合してから、同一 transaction で新 IDへ移す。
-		// 旧 ID が別の hook で変化済みなら、到着順が逆転した遅延 hook として拒否する。
+		// Rewind/fork が示す旧 ID が変化済みなら、遅れて届いた hook として拒否する。
 		if currentAgentID != replacesAgentID {
 			return false, errors.New("agent session mapping changed before replacement")
 		}
@@ -251,7 +255,8 @@ func (s *Store) BindAgentSessionFromHook(ctx context.Context, id, agentID, sourc
 		case !errors.Is(err, sql.ErrNoRows):
 			return false, err
 		}
-		res, err := tx.ExecContext(ctx, `UPDATE sessions SET agent_session_id=?,state=CASE WHEN state='STARTING' THEN 'ACTIVE' ELSE state END,started_at=COALESCE(started_at,?),last_heartbeat_at=? WHERE id=? AND agent_session_id=?`, agentID, now(), now(), id, replacesAgentID)
+		res, err := tx.ExecContext(ctx, `UPDATE sessions SET agent_session_id=?,state=CASE WHEN state='STARTING' THEN 'ACTIVE' ELSE state END,started_at=COALESCE(started_at,?),last_heartbeat_at=?
+			WHERE id=? AND agent_session_id=? AND (NOT ? OR state IN ('STARTING','ACTIVE','UNBOUND','RESTORING'))`, agentID, now(), now(), id, replacesAgentID, claudeClear)
 		if err != nil {
 			return false, err
 		}
@@ -278,7 +283,7 @@ func (s *Store) BindAgentSessionFromHook(ctx context.Context, id, agentID, sourc
 	if kind == "codex" && parent == "" && sessionState == "ACTIVE" && currentAgentID != "" && currentAgentID != agentID && (source == "startup" || source == "fork") {
 		return false, nil
 	}
-	if parent != "" {
+	if parent != "" && !claudeClear {
 		if _, err := tx.ExecContext(ctx, `UPDATE sessions SET agent_session_id=NULL WHERE agent_kind=? AND agent_session_id=? AND id<>?`, kind, agentID, id); err != nil {
 			return false, err
 		}
