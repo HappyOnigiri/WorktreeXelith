@@ -249,8 +249,10 @@ func (s *Store) BindAgentSessionFromHook(ctx context.Context, id, agentID, sourc
 			return false, errors.New("agent session mapping changed before replacement")
 		}
 		var ownerID string
-		err := tx.QueryRowContext(ctx, `SELECT id FROM sessions WHERE agent_kind=? AND id<>?
-			AND (agent_session_id=? OR (? AND state='RESTORING' AND pending_agent_session_id=?))`, kind, id, agentID, claudeResume, agentID).Scan(&ownerID)
+		err := tx.QueryRowContext(ctx, `SELECT id FROM sessions WHERE agent_kind=? AND agent_session_id=? AND id<>?
+			UNION ALL
+			SELECT id FROM sessions WHERE ? AND agent_kind=? AND state='RESTORING' AND pending_agent_session_id=? AND id<>?
+			LIMIT 1`, kind, agentID, id, claudeResume, kind, agentID, id).Scan(&ownerID)
 		switch {
 		case err == nil:
 			return false, errors.New("replacement agent session is already bound")
