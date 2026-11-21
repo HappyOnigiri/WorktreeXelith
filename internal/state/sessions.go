@@ -238,8 +238,9 @@ func (s *Store) BindAgentSessionFromHook(ctx context.Context, id, agentID, sourc
 		return false, err
 	}
 	claudeClear := kind == "claude" && source == "clear" && replacesAgentID == ""
-	if claudeClear && currentAgentID != agentID {
-		// Claude の clear には旧 ID がないため、この transaction で読んだ ID を置換元にする。
+	claudeResume := kind == "claude" && source == "resume" && sessionState != "RESTORING" && currentAgentID != "" && currentAgentID != agentID
+	if (claudeClear && currentAgentID != agentID) || claudeResume {
+		// Claude の clear と resume には旧 ID がないため、この transaction で読んだ ID を置換元にする。
 		replacesAgentID = currentAgentID
 	}
 	if replacesAgentID != "" {
@@ -248,7 +249,8 @@ func (s *Store) BindAgentSessionFromHook(ctx context.Context, id, agentID, sourc
 			return false, errors.New("agent session mapping changed before replacement")
 		}
 		var ownerID string
-		err := tx.QueryRowContext(ctx, `SELECT id FROM sessions WHERE agent_kind=? AND agent_session_id=? AND id<>?`, kind, agentID, id).Scan(&ownerID)
+		err := tx.QueryRowContext(ctx, `SELECT id FROM sessions WHERE agent_kind=? AND id<>?
+			AND (agent_session_id=? OR (? AND state='RESTORING' AND pending_agent_session_id=?))`, kind, id, agentID, claudeResume, agentID).Scan(&ownerID)
 		switch {
 		case err == nil:
 			return false, errors.New("replacement agent session is already bound")
@@ -256,7 +258,8 @@ func (s *Store) BindAgentSessionFromHook(ctx context.Context, id, agentID, sourc
 			return false, err
 		}
 		res, err := tx.ExecContext(ctx, `UPDATE sessions SET agent_session_id=?,state=CASE WHEN state='STARTING' THEN 'ACTIVE' ELSE state END,started_at=COALESCE(started_at,?),last_heartbeat_at=?
-			WHERE id=? AND agent_session_id=? AND (NOT ? OR state IN ('STARTING','ACTIVE','UNBOUND','RESTORING'))`, agentID, now(), now(), id, replacesAgentID, claudeClear)
+			WHERE id=? AND agent_session_id=? AND (NOT ? OR state IN ('STARTING','ACTIVE','UNBOUND','RESTORING'))
+			AND (NOT ? OR state='ACTIVE')`, agentID, now(), now(), id, replacesAgentID, claudeClear, claudeResume)
 		if err != nil {
 			return false, err
 		}

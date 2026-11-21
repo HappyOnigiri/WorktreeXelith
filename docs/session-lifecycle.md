@@ -115,8 +115,8 @@
    保存済み方針が`off`で`-n`を付けていない起動は、従来どおり素通しする。
 
    `wx hook session-start`はエージェント側のネイティブなセッションIDをwxのセッションへ結び付ける。
-   Claude Code の`/clear`では、同じwxセッションの紐付けを`SessionStart`の`source=clear`が示す新しいIDへ移す。
-   新しいIDが別のwxセッションに紐付いている場合は移さない。
+   Claude Code の`/clear`や会話の再開では、同じwxセッションの紐付けを`SessionStart`が示すIDへ移す。
+   別のwxセッションに紐付いているIDは使えず、会話の切り替えでは別のセッションが復元用に予約したIDも使えない。
    Codexのrewind / forkは、transcript metadataの`forked_from_id`とhook payloadの新IDを照合できた場合だけ旧IDから新IDへmappingを移管する。
    ACTIVEなroot sessionへCodexの別IDから`startup`または置換元を検証できない`fork`が届いた場合は、`btw`などが作る補助threadとして成功扱いにし、主threadのmappingを変更しない。
    RESTORING中に届いたIDは`pending_agent_session_id`として保持し、復元成功後に親から新しいセッションへ移譲する。
