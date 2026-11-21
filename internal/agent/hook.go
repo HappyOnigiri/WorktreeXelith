@@ -105,7 +105,7 @@ func RunHook(ctx context.Context, event string, input io.Reader) error {
 		if response.PreviousWorktree != "" && payload.Source == "resume" {
 			previous := strings.NewReplacer("\n", " ", "\r", " ").Replace(response.PreviousWorktree)
 			cwd := strings.NewReplacer("\n", " ", "\r", " ").Replace(payload.CWD)
-			_, _ = fmt.Fprintf(os.Stdout, "wx notice: this conversation previously ran in %s; the workspace is now %s. Do not use the old path.\n", previous, cwd)
+			_, _ = fmt.Fprintf(os.Stdout, "wx notice: the previous wx lease used %s. The workspace is now %s. Do not use the old path.\n", previous, cwd)
 		}
 		if recoveryDiscarded {
 			writeRecoveryDiscardedNotice()
