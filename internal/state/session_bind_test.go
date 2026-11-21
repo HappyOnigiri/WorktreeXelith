@@ -242,3 +242,74 @@ func TestClaudeClearRejectsOwnedNativeSession(t *testing.T) {
 		})
 	}
 }
+
+func TestClaudeResumeRejectsOwnedOrReservedNativeSession(t *testing.T) {
+	t.Parallel()
+	for _, claim := range []string{"owned", "reserved"} {
+		t.Run(claim, func(t *testing.T) {
+			store := openTestStore(t)
+			ctx := context.Background()
+			createAgentBindSession(t, store, "parent", "claude")
+			ownerID := "parent"
+			if claim == "owned" {
+				bindAgentSessionForTest(t, store, ownerID, "native-target")
+			} else {
+				ownerID = "restoring"
+				other := Session{
+					ID: ownerID, SlotID: ownerID, ParentSessionID: "parent", State: "RESTORING",
+					AgentKind: "claude", PendingAgentSessionID: "native-target", TokenHash: HashToken(ownerID),
+				}
+				if _, err := store.CreateSlotSession(ctx, Slot{
+					ID: ownerID, RootID: testRootID,
+					RelPath: "_unbound/restoring", State: "RESTORING",
+				}, nil, other, ""); err != nil {
+					t.Fatal(err)
+				}
+			}
+			child := Session{ID: "child", SlotID: "child", ParentSessionID: "parent", State: "ACTIVE", AgentKind: "claude", TokenHash: HashToken("child")}
+			if _, err := store.CreateSlotSession(ctx, Slot{
+				ID: child.SlotID, RootID: testRootID,
+				RelPath: "_unbound/child", State: "LEASED",
+			}, nil, child, ""); err != nil {
+				t.Fatal(err)
+			}
+			bindAgentSessionForTest(t, store, child.ID, "native-current")
+
+			if _, err := store.BindAgentSessionFromHook(ctx, child.ID, "native-target", "resume"); err == nil {
+				t.Fatalf("resume accepted a %s native session", claim)
+			}
+			got, err := store.SessionByID(ctx, child.ID)
+			if err != nil || got.AgentSessionID != "native-current" || got.State != "ACTIVE" {
+				t.Fatalf("rejected resume changed the lease: session=%+v err=%v", got, err)
+			}
+			owner, err := store.SessionByID(ctx, ownerID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if claim == "owned" && owner.AgentSessionID != "native-target" {
+				t.Fatalf("rejected resume changed ownership: session=%+v", owner)
+			}
+			if claim == "reserved" && (owner.State != "RESTORING" || owner.PendingAgentSessionID != "native-target" || owner.AgentSessionID != "") {
+				t.Fatalf("rejected resume changed the reservation: session=%+v", owner)
+			}
+		})
+	}
+}
+
+func TestClaudeResumeRejectsSwitchAfterReleaseStarts(t *testing.T) {
+	t.Parallel()
+	store := openTestStore(t)
+	ctx := context.Background()
+	createAgentBindSession(t, store, "claude", "claude")
+	bindAgentSessionForTest(t, store, "claude", "native-current")
+	if _, changed, _, err := store.ReleaseWithOutcome(ctx, "claude", "", "claude"); err != nil || !changed {
+		t.Fatalf("start release: changed=%v err=%v", changed, err)
+	}
+	if _, err := store.BindAgentSessionFromHook(ctx, "claude", "native-target", "resume"); err == nil {
+		t.Fatal("resume changed a releasing session")
+	}
+	got, err := store.SessionByID(ctx, "claude")
+	if err != nil || got.AgentSessionID != "native-current" || got.State != "RELEASING" {
+		t.Fatalf("rejected resume changed the releasing session: session=%+v err=%v", got, err)
+	}
+}

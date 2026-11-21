@@ -46,7 +46,7 @@ func TestSessionStartHookPrintsWorkspaceAndResumeNotices(t *testing.T) {
 	want := "wx workspace notice:\n" +
 		"- This is a wx-managed detached worktree. Its HEAD, index, and tracked files are isolated from the source checkout. Keep HEAD detached; to publish, run `git branch <name> HEAD` and push.\n" +
 		"- Paths materialized by wx link rules are symlinks to the source workspace. Changes through them affect the source immediately and are not included in wx snapshots.\n" +
-		"wx notice: this conversation previously ran in /old/worktree; the workspace is now /new/worktree. Do not use the old path.\n"
+		"wx notice: the previous wx lease used /old/worktree. The workspace is now /new/worktree. Do not use the old path.\n"
 	if output != want {
 		t.Fatalf("resume notice=%q, want %q", output, want)
 	}

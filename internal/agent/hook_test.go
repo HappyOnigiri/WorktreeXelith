@@ -156,16 +156,16 @@ func TestSessionStartHookAcceptsCompactionAfterStartup(t *testing.T) {
 	}
 }
 
-func TestSessionEndHookUsesNativeSessionInIdempotencyKey(t *testing.T) {
+func TestSessionEndHookUsesNewIdempotencyKeyForEachInvocation(t *testing.T) {
 	clearHookEnvironment(t)
 	handler := &recordingHandler{}
 	ctx := startHookServer(t, handler)
 	t.Setenv("WX_SESSION_ID", "wx-shared")
 	t.Setenv("WX_SESSION_TOKEN", "token")
 
-	for _, agentID := range []string{"native-primary", "native-btw"} {
-		if err := RunHook(ctx, "session-end", strings.NewReader(`{"session_id":"`+agentID+`"}`)); err != nil {
-			t.Fatalf("session-end %s: %v", agentID, err)
+	for range 2 {
+		if err := RunHook(ctx, "session-end", strings.NewReader(`{"session_id":"native-primary"}`)); err != nil {
+			t.Fatal(err)
 		}
 	}
 	if methods := strings.Join(handler.methodsSnapshot(), ","); methods != "Release,Release" {

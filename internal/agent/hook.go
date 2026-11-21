@@ -3,6 +3,7 @@ package agent
 import (
 	"bufio"
 	"context"
+	"crypto/rand"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -86,6 +87,10 @@ func RunHook(ctx context.Context, event string, input io.Reader) error {
 		if replacesAgentSessionID != "" {
 			idempotencyKey += ":" + replacesAgentSessionID
 		}
+		if payload.Source == "resume" {
+			// 同じ会話に戻るたびに紐付けを見直し、この呼び出し内の通信再試行だけ結果を再利用する。
+			idempotencyKey = "bind-resume:" + rand.Text()
+		}
 		params := map[string]any{"session_id": wxID, "token": token, "agent_session_id": payload.SessionID, "source": payload.Source}
 		if replacesAgentSessionID != "" {
 			params["replaces_agent_session_id"] = replacesAgentSessionID
@@ -100,7 +105,7 @@ func RunHook(ctx context.Context, event string, input io.Reader) error {
 		if response.PreviousWorktree != "" && payload.Source == "resume" {
 			previous := strings.NewReplacer("\n", " ", "\r", " ").Replace(response.PreviousWorktree)
 			cwd := strings.NewReplacer("\n", " ", "\r", " ").Replace(payload.CWD)
-			_, _ = fmt.Fprintf(os.Stdout, "wx notice: this conversation previously ran in %s; the workspace is now %s. Do not use the old path.\n", previous, cwd)
+			_, _ = fmt.Fprintf(os.Stdout, "wx notice: the previous wx lease used %s. The workspace is now %s. Do not use the old path.\n", previous, cwd)
 		}
 		if recoveryDiscarded {
 			writeRecoveryDiscardedNotice()
@@ -151,7 +156,8 @@ func RunHook(ctx context.Context, event string, input io.Reader) error {
 		}
 		releaseCtx, cancel := context.WithTimeout(ctx, 2500*time.Millisecond)
 		defer cancel()
-		return client.CallWithKey(releaseCtx, "Release", "release:"+wxID+":session-end-hook:"+payload.SessionID, map[string]any{
+		// 会話を切り替えたときと終了したときで、同じ ID の通知が届く。
+		return client.CallWithKey(releaseCtx, "Release", "release-hook:"+rand.Text(), map[string]any{
 			"session_id": wxID, "token": token, "reason": "session-end-hook", "agent_session_id": payload.SessionID,
 		}, nil)
 	default:
