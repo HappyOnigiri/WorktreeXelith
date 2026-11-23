@@ -153,3 +153,23 @@ func TestPreToolUseKeepsAttachDenialsOutsideCommitInspection(t *testing.T) {
 		})
 	}
 }
+
+func TestInspectsHeadCommitRequiresOutputWithoutDecorations(t *testing.T) {
+	for _, subcommand := range []string{"log", "show"} {
+		for _, test := range []struct {
+			args []commandWord
+			want bool
+		}{
+			{[]commandWord{{value: "-1"}, {value: "HEAD"}}, false},
+			{[]commandWord{{value: "--oneline"}, {value: "HEAD"}}, false},
+			{[]commandWord{{value: "--no-decorate"}, {value: "HEAD"}}, false},
+			{[]commandWord{{value: "--oneline"}, {value: "--no-decorate"}, {value: "HEAD"}}, true},
+			{[]commandWord{{value: "--oneline"}, {value: "--format=%H"}, {value: "HEAD"}}, true},
+			{[]commandWord{{value: "--format=%h"}, {value: "--oneline"}, {value: "HEAD"}}, false},
+		} {
+			if got := inspectsHeadCommit(subcommand, test.args); got != test.want {
+				t.Errorf("inspectsHeadCommit(%s, %+v) = %v, want %v", subcommand, test.args, got, test.want)
+			}
+		}
+	}
+}

@@ -129,6 +129,8 @@ func inspectsHeadCommit(subcommand string, args []commandWord) bool {
 		return len(args) == 1 && (args[0].value == "HEAD" || args[0].value == "HEAD^{commit}")
 	case "show", "log":
 		head := false
+		noDecorate := false
+		format := ""
 		for _, arg := range args {
 			switch arg.value {
 			case "HEAD":
@@ -136,12 +138,18 @@ func inspectsHeadCommit(subcommand string, args []commandWord) bool {
 					return false
 				}
 				head = true
-			case "-1", "--oneline", "--no-patch", "-s", "--stat", "--format=%H", "--format=%h":
+			case "--no-decorate":
+				noDecorate = true
+			case "--format=%H", "--format=%h", "--oneline":
+				// --oneline も出力形式を指定するため、最後の指定を覚える。
+				format = arg.value
+			case "-1", "--no-patch", "-s", "--stat":
 			default:
 				return false
 			}
 		}
-		return true
+		// format.pretty に含まれる %d は --no-decorate でも ref を表示する。
+		return format != "" && (format != "--oneline" || noDecorate)
 	default:
 		return false
 	}
