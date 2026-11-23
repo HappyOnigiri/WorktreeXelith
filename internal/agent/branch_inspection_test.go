@@ -10,7 +10,33 @@ import (
 	"testing"
 
 	"github.com/HappyOnigiri/WorktreeX/internal/gitx"
+	"github.com/HappyOnigiri/WorktreeX/internal/testsupport"
 )
+
+func TestBranchInspectionDeniesWhenDaemonIsUnreachable(t *testing.T) {
+	clearHookEnvironment(t)
+	fixture := newBranchPolicyFixture(t)
+	t.Setenv("WX_SESSION_ID", "wx")
+	t.Setenv("WX_SESSION_TOKEN", "token")
+	t.Setenv("WX_DAEMON_SOCKET", testsupport.SocketPath(t, "missing.sock"))
+	t.Setenv("WX_WORKSPACE_ROOT", fixture.detached)
+	command := strings.Join([]string{"git", "switch", "other", "&&", "git", "rev-parse", "--verify", "HEAD"}, " ")
+	payload := recordedPayloadWithCommand(t, "codex-0.151.0-pre-tool-use-exec.json", command)
+	payload = strings.Replace(payload, `"cwd":"/tmp/wx-session/root"`, `"cwd":"`+fixture.detached+`"`, 1)
+	output := captureHookStdout(t, func() {
+		if err := RunHook(context.Background(), "pre-tool-use", strings.NewReader(payload)); err != nil {
+			t.Fatalf("hook did not return an attach denial: %v", err)
+		}
+	})
+	var decision preToolUseHookOutput
+	if err := json.Unmarshal([]byte(output), &decision); err != nil {
+		t.Fatalf("hook output %q: %v", output, err)
+	}
+	specific := decision.HookSpecificOutput
+	if specific.PermissionDecision != "deny" || specific.PermissionDecisionReason != branchAttachReason || specific.UpdatedInput != nil {
+		t.Fatalf("decision=%+v, want the original attach denial", specific)
+	}
+}
 
 func TestPreToolUseDetachesBranchForCommitInspection(t *testing.T) {
 	fixture := newBranchPolicyFixture(t)

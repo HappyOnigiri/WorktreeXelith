@@ -31,8 +31,9 @@ type preToolUseHookSpecificOutput struct {
 }
 
 type preToolUseHookOutput struct {
-	HookSpecificOutput preToolUseHookSpecificOutput `json:"hookSpecificOutput"`
-	SystemMessage      string                       `json:"systemMessage,omitempty"`
+	HookSpecificOutput         preToolUseHookSpecificOutput `json:"hookSpecificOutput"`
+	SystemMessage              string                       `json:"systemMessage,omitempty"`
+	denyAttachOnReadinessError bool
 }
 
 const (

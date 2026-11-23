@@ -139,6 +139,11 @@ func RunHook(ctx context.Context, event string, input io.Reader) error {
 			State string `json:"state"`
 		}
 		if err := client.Call(ctx, "LeaseProgress", map[string]any{"session_id": wxID, "token": token}, &progress); err != nil {
+			// hook がエラーで終わると、書き換え前の attach が実行され得る。
+			if toolDecision.denyAttachOnReadinessError {
+				writePreToolUseOutput(denyPreToolUse(branchAttachReason, branchAttachSystemMessage))
+				return nil
+			}
 			return err
 		}
 		if !fullyReady(progress.State) {

@@ -84,7 +84,8 @@ func branchAttachHookOutput(ctx context.Context, payload []byte) (preToolUseHook
 						PermissionDecisionReason: "The following Git commands only inspect the commit, so wx keeps the linked worktree detached.",
 						UpdatedInput:             updatedCommandInput(decoded.ToolInput, rewritten),
 					},
-					SystemMessage: "wx rewrote the branch attach as a detached checkout.",
+					SystemMessage:              "wx rewrote the branch attach as a detached checkout.",
+					denyAttachOnReadinessError: true,
 				}, true
 			}
 		}
