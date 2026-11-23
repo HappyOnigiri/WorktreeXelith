@@ -13,6 +13,8 @@ type commandWord struct {
 	quoted   bool
 	expanded bool
 	globbed  bool
+	// leasedDirectory はフックが生成した cd の引数にだけ付ける。
+	leasedDirectory bool
 	// tilde は語が引用されていない ~ で始まり、shell がホームへ展開し得ることを表す。
 	tilde bool
 	// substitutions は語の中の二重引用符内の `$(...)` とバッククオートの本文で、語とは別のサブシェルとして判定する。
@@ -40,7 +42,7 @@ const (
 )
 
 // start と end は command 内の語のバイト範囲で、語の token にだけ入る。
-// operator は区切りの原文（`&&` `||` `;` 改行）と、引用されていない置換を開く括弧の `$(` である。
+// operator は区切り・リダイレクトの原文か、引用されていない置換を開く `$(` である。
 // どちらも git worktree add を連結の中で書き換えるときに、置き換える範囲と前後の繋ぎ方を知るために使う。
 // commentlint:allow-long -- 位置と区切りの原文を持つ理由を残す
 type policyToken struct {
@@ -225,11 +227,13 @@ func (l *policyLexer) operator(char byte) bool {
 	case char == ';':
 		l.emitSeparator(";")
 	case char == '&' && next == '>':
+		start := l.index
 		l.index++
 		if l.next() == '>' {
 			l.index++
 		}
 		l.emit(policyTokenRedirect)
+		l.tokens[len(l.tokens)-1].operator = l.command[start : l.index+1]
 	case next == char && (char == '&' || char == '|'):
 		l.index++
 		l.emitSeparator(string([]byte{char, char}))
@@ -262,13 +266,15 @@ func (l *policyLexer) redirect() {
 	}
 	start := l.index
 	l.index = consumeRedirect(l.command, l.index)
-	switch l.command[start : l.index+1] {
+	operator := l.command[start : l.index+1]
+	switch operator {
 	case "<<-":
 		l.heredocDelimiter, l.stripTabs = true, true
 	case "<<":
 		l.heredocDelimiter, l.stripTabs = true, false
 	}
 	l.emit(policyTokenRedirect)
+	l.tokens[len(l.tokens)-1].operator = operator
 }
 
 func (l *policyLexer) unquoted(char byte) {
@@ -382,6 +388,9 @@ func isDigits(value string) bool {
 	return true
 }
 
+// policyLeasedDirectory は解析時点では実パスがない貸出先を表す。
+const policyLeasedDirectory = "\x00"
+
 // policyGitInvocation は 1 つの git 呼び出しで、target が空なら実行先を静的に決められない。
 type policyGitInvocation struct {
 	subcommand string
@@ -405,11 +414,17 @@ func policyGitInvocations(tokens []policyToken, cwd string) (invocations []polic
 	if base == "" {
 		return nil, false
 	}
-	return policyGitInvocationsFrom(tokens, base)
+	return policyGitInvocationsFrom(tokens, base, true)
 }
 
 // policyGitInvocationsFrom は解決済みの base から tokens を追う。base が空なら実行先を決められない呼び出しとして返す。
-func policyGitInvocationsFrom(tokens []policyToken, base string) (invocations []policyGitInvocation, resolved bool) {
+func policyGitInvocationsFrom(tokens []policyToken, base string, bashContextKnown bool) (invocations []policyGitInvocation, resolved bool) {
+	logicalCWDKnown := false
+	if bashContextKnown {
+		// cd は有効な論理 PWD を引き継ぐ。表記が実パスと異なる起点からは追わない。
+		pwd := os.Getenv("PWD")
+		logicalCWDKnown = pwd == "" || pwd == base || resolvePolicyDirectory(commandWord{value: pwd}, "/") != base
+	}
 	var stack []policyFrame
 	var segment []commandWord
 	redirectTarget := false
@@ -419,24 +434,34 @@ func policyGitInvocationsFrom(tokens []policyToken, base string) (invocations []
 	// `&` の左の command は別プロセスで走るので、その cd を後続へ引き継がない。
 	// パイプラインの要素は shell によって別プロセスかどうかが違うので、cd があれば以降の実行先を決められないものとする。
 	// commentlint:allow-long -- 区切りの種類で cd の引き継ぎを変える理由を残す
-	process := func(next policyTokenKind) bool {
+	process := func(next policyToken) bool {
 		parts := segment
 		segment = nil
 		if redirectTarget {
 			return false
 		}
 		previous := base
+		if bashContextKnown && len(parts) > 0 {
+			if inner, ok := policyBashInvocation(parts, base, logicalCWDKnown); ok {
+				invocations = append(invocations, inner)
+				bashContextKnown = false
+				piped = next.kind == policyTokenPipe
+				return true
+			}
+			// && なら cd の成功後にだけ子 Bash へ進む。|| などでは失敗後にも進み得る。
+			bashContextKnown = logicalCWDKnown && next.operator == "&&" && literalPolicyCDTarget(parts, base) != ""
+		}
 		invocation, isGit, ok := policySegment(parts, &base)
 		if ok && isGit {
 			invocations = append(invocations, invocation)
 		}
 		switch {
-		case next == policyTokenBackground:
+		case next.kind == policyTokenBackground:
 			base = previous
-		case (next == policyTokenPipe || piped) && base != previous:
+		case (next.kind == policyTokenPipe || piped) && base != previous:
 			base = ""
 		}
-		piped = next == policyTokenPipe
+		piped = next.kind == policyTokenPipe
 		return ok
 	}
 	all := append(append([]policyToken(nil), tokens...), policyToken{kind: policyTokenSeparator})
@@ -445,7 +470,7 @@ func policyGitInvocationsFrom(tokens []policyToken, base string) (invocations []
 		case policyTokenWord:
 			// 置換の本文はその時点の実行先で走るサブシェルで、中の cd は外へ持ち出さない。
 			for _, inner := range token.word.substitutions {
-				nested, ok := policyGitInvocationsFrom(inner, base)
+				nested, ok := policyGitInvocationsFrom(inner, base, false)
 				if !ok {
 					return nil, false
 				}
@@ -460,12 +485,14 @@ func policyGitInvocationsFrom(tokens []policyToken, base string) (invocations []
 			}
 			segment = append(segment, token.word)
 		case policyTokenRedirect:
+			bashContextKnown = false
 			// `> >(...)` の 2 つ目の `>` はプロセス置換の一部で、1 つ目のリダイレクト先になる。
 			if redirectTarget && all[index+1].kind != policyTokenOpen {
 				return nil, false
 			}
 			redirectTarget = true
 		case policyTokenOpen:
+			bashContextKnown = false
 			if redirectTarget {
 				// `<(...)` と `>(...)` はプロセス置換で、本文をサブシェルとして読んだ後に外の command の続きへ戻る。
 				// commentlint:allow-long -- 外の command を保存したまま本文を読む理由を残す
@@ -474,19 +501,19 @@ func policyGitInvocationsFrom(tokens []policyToken, base string) (invocations []
 				segment, piped = nil, false
 				continue
 			}
-			if !process(token.kind) {
+			if !process(token) {
 				return nil, false
 			}
 			stack = append(stack, policyFrame{base: base})
 		case policyTokenClose:
-			if !process(token.kind) || len(stack) == 0 {
+			if !process(token) || len(stack) == 0 {
 				return nil, false
 			}
 			frame := stack[len(stack)-1]
 			stack = stack[:len(stack)-1]
 			base, segment, piped = frame.base, frame.segment, frame.piped
 		case policyTokenSeparator, policyTokenPipe, policyTokenBackground:
-			if !process(token.kind) {
+			if !process(token) {
 				return nil, false
 			}
 		}
@@ -543,7 +570,9 @@ func policySegment(parts []commandWord, base *string) (invocation policyGitInvoc
 		if valueIndex >= len(parts) || strings.HasPrefix(parts[valueIndex].value, "-") {
 			return policyGitInvocation{}, false, false
 		}
-		if *base != "" {
+		if parts[valueIndex].leasedDirectory {
+			*base = policyLeasedDirectory
+		} else if *base != "" {
 			*base = resolvePolicyDirectory(parts[valueIndex], *base)
 		}
 		return policyGitInvocation{}, false, true

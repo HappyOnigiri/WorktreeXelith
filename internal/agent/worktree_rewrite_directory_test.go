@@ -57,7 +57,7 @@ func TestClassifyWorktreeAddCommandResolvesDirectory(t *testing.T) {
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			verdict := classifyWorktreeAddCommand(test.command, worktreeAddLocation{cwd: test.cwd, root: root})
+			verdict := classifyWorktreeAddCommand(t.Context(), test.command, worktreeAddLocation{cwd: test.cwd, root: root})
 			if verdict.command != test.rewrite || verdict.reason != test.reason {
 				t.Fatalf("verdict=(decision=%d command=%q reason=%q), want command %q reason %q", verdict.decision, verdict.command, verdict.reason, test.rewrite, test.reason)
 			}
@@ -72,7 +72,7 @@ func TestClassifyWorktreeAddCommandRefusesDirectoryWithoutRoot(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, root := range []string{"", filepath.Join(repository, "missing")} {
-		verdict := classifyWorktreeAddCommand("git -C "+repository+" worktree add x", worktreeAddLocation{cwd: repository, root: root})
+		verdict := classifyWorktreeAddCommand(t.Context(), "git -C "+repository+" worktree add x", worktreeAddLocation{cwd: repository, root: root})
 		if verdict.reason != denyReasonDirectory {
 			t.Fatalf("root %q verdict=%+v, want %q", root, verdict, denyReasonDirectory)
 		}

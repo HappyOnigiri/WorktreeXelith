@@ -9,6 +9,7 @@ import (
 )
 
 func TestClassifyWorktreeAddCommand(t *testing.T) {
+	const literalBash = "bash -c '"
 	tests := []struct {
 		name     string
 		command  string
@@ -16,13 +17,14 @@ func TestClassifyWorktreeAddCommand(t *testing.T) {
 		rewrite  string
 		reason   string
 	}{
+		{name: "literal Bash script", command: literalBash + "git worktree " + "add x'", decision: worktreeAddDeny, reason: denyReasonCompound},
 		{name: "detached HEAD", command: "git worktree add --detach /tmp/x HEAD", decision: worktreeAddRewrite, rewrite: "wx new"},
 		{name: "no start point", command: "git worktree add ../wt", decision: worktreeAddRewrite, rewrite: "wx new"},
 		{name: "branch start point", command: "git worktree add x feature", decision: worktreeAddRewrite, rewrite: "wx new --branch feature"},
 		{name: "remote start point", command: "git worktree add x origin/feature/one", decision: worktreeAddRewrite, rewrite: "wx new --branch feature/one"},
 		{name: "absolute git", command: "/usr/bin/git worktree add -f --no-checkout x", decision: worktreeAddRewrite, rewrite: "wx new"},
 		{name: "quoted path", command: `git worktree add "/tmp/dir with space" main`, decision: worktreeAddRewrite, rewrite: "wx new --branch main"},
-		{name: "compound", command: "git worktree add x && cd x", decision: worktreeAddDeny, reason: denyReasonCompound},
+		{name: "compound without a matching cd", command: "git worktree add x && cd y", decision: worktreeAddDeny, reason: denyReasonCompound},
 		{name: "redirect", command: "git worktree add x > log", decision: worktreeAddDeny, reason: denyReasonCompound},
 		{name: "nested shell", command: `sh -c 'git worktree add x'`, decision: worktreeAddDeny, reason: denyReasonCompound},
 		// cwd を持たない payload では相対の -C を解決できない。
@@ -78,7 +80,7 @@ func TestClassifyWorktreeAddCommand(t *testing.T) {
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			verdict := classifyWorktreeAddCommand(test.command, worktreeAddLocation{})
+			verdict := classifyWorktreeAddCommand(t.Context(), test.command, worktreeAddLocation{})
 			if verdict.decision != test.decision {
 				t.Fatalf("decision=%d, want %d (reason=%q command=%q)", verdict.decision, test.decision, verdict.reason, verdict.command)
 			}
@@ -172,7 +174,7 @@ func TestCommandRunsInWorkspace(t *testing.T) {
 // 部分 merge を前提にすると description や timeout のような未知フィールドが落ちる。
 func TestWorktreeAddHookOutputKeepsUnknownToolInputFields(t *testing.T) {
 	payload := []byte(`{"cwd":"/wx/slot","tool_name":"Bash","tool_input":{"command":"git worktree add x feature","description":"branch out","timeout":120}}`)
-	output, ok := worktreeAddHookOutput(payload, "/wx/slot")
+	output, ok := worktreeAddHookOutput(t.Context(), payload, "/wx/slot")
 	if !ok {
 		t.Fatal("payload was not rewritten")
 	}
@@ -209,7 +211,7 @@ func TestWorktreeAddHookOutputResolvesDirectoryFromPayloadCWD(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	output, ok := worktreeAddHookOutput(payload, root)
+	output, ok := worktreeAddHookOutput(t.Context(), payload, root)
 	if !ok || output.HookSpecificOutput.PermissionDecision != "allow" {
 		t.Fatalf("output=%+v ok=%v, want a rewrite", output.HookSpecificOutput, ok)
 	}
@@ -231,7 +233,7 @@ func TestWorktreeAddHookOutputIgnoresUnusablePayloads(t *testing.T) {
 		`{"tool_input":{"command":["git","worktree","add","x"]}}`,
 		`{"cwd":"/elsewhere","tool_input":{"command":"git worktree add x"}}`,
 	} {
-		if _, ok := worktreeAddHookOutput([]byte(payload), "/wx/slot"); ok {
+		if _, ok := worktreeAddHookOutput(t.Context(), []byte(payload), "/wx/slot"); ok {
 			t.Fatalf("payload %q produced a decision", payload)
 		}
 	}
@@ -239,7 +241,7 @@ func TestWorktreeAddHookOutputIgnoresUnusablePayloads(t *testing.T) {
 
 func TestWorktreeAddHookDeniesWithoutUpdatedInput(t *testing.T) {
 	payload := []byte(`{"cwd":"/wx/slot","tool_input":{"command":"git worktree add -b feature x"}}`)
-	output, ok := worktreeAddHookOutput(payload, "/wx/slot")
+	output, ok := worktreeAddHookOutput(t.Context(), payload, "/wx/slot")
 	if !ok {
 		t.Fatal("branch creation was not denied")
 	}
