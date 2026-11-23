@@ -242,10 +242,9 @@ var gitEnvDenylist = map[string]bool{
 	"GIT_NAMESPACE":           true,
 }
 
-// isGitConfigKeyValueVar は config entry を注入する連番付きの GIT_CONFIG_KEY_<n>/GIT_CONFIG_VALUE_<n> か判定する。
-// 連番のため gitEnvDenylist には完全名で列挙できない。
-func isGitConfigKeyValueVar(name string) bool {
-	return strings.HasPrefix(name, "GIT_CONFIG_KEY_") || strings.HasPrefix(name, "GIT_CONFIG_VALUE_")
+// StripsInheritedEnv は Runner が継承環境から除外する変数名かどうかを返す。
+func StripsInheritedEnv(name string) bool {
+	return gitEnvDenylist[name] || strings.HasPrefix(name, "GIT_CONFIG_KEY_") || strings.HasPrefix(name, "GIT_CONFIG_VALUE_")
 }
 
 // sanitizedEnviron は repository-scoped Git 変数を除いた現在の環境を返す。
@@ -255,7 +254,7 @@ func sanitizedEnviron() []string {
 	sanitized := make([]string, 0, len(environ))
 	for _, kv := range environ {
 		name, _, ok := strings.Cut(kv, "=")
-		if ok && (gitEnvDenylist[name] || isGitConfigKeyValueVar(name)) {
+		if ok && StripsInheritedEnv(name) {
 			continue
 		}
 		sanitized = append(sanitized, kv)
