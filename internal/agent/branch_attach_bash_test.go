@@ -35,6 +35,8 @@ func TestClassifyBranchAttachInLiteralBashCommand(t *testing.T) {
 		{command: inline("git -C ../detached " + "switch other"), cwd: fixture.main, want: branchPolicyAttach},
 		{command: inline("cd ../main && "+switchOther) + " && " + switchOther, cwd: fixture.detached, want: branchPolicyAttach},
 		{command: inline("cd ../detached && "+detach) + "; " + switchOther, cwd: fixture.main, want: branchPolicyAllow},
+		{command: inline(detach) + " || echo detach failed", cwd: fixture.detached, want: branchPolicyAllow},
+		{command: "cd ../main || " + inline(detach), cwd: fixture.detached, want: branchPolicyUnresolved},
 		{command: "cd ../detached && " + inline(switchOther), cwd: fixture.main, want: branchPolicyAttach},
 		{command: inline(`cd "$REPO" && ` + switchOther), cwd: fixture.detached, want: branchPolicyUnresolved},
 		{command: inline(`git -C "$REPO" ` + "switch other"), cwd: fixture.main, want: branchPolicyUnresolved},
