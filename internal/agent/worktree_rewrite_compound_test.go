@@ -121,7 +121,7 @@ func TestClassifyWorktreeAddCommandRewritesCompound(t *testing.T) {
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			verdict := classifyWorktreeAddCommand(test.command, worktreeAddLocation{cwd: test.cwd, root: root})
+			verdict := classifyWorktreeAddCommand(t.Context(), test.command, worktreeAddLocation{cwd: test.cwd, root: root})
 			if verdict.decision != worktreeAddRewrite || !verdict.compound || verdict.command != test.rewrite {
 				t.Fatalf("verdict=(decision=%d compound=%v command=%q reason=%q), want %q", verdict.decision, verdict.compound, verdict.command, verdict.reason, test.rewrite)
 			}
@@ -198,7 +198,7 @@ func TestClassifyWorktreeAddCommandKeepsUnsafeCompoundsDenied(t *testing.T) {
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			verdict := classifyWorktreeAddCommand(test.command, worktreeAddLocation{cwd: test.cwd, root: root})
+			verdict := classifyWorktreeAddCommand(t.Context(), test.command, worktreeAddLocation{cwd: test.cwd, root: root})
 			if verdict.decision != worktreeAddDeny || verdict.reason != denyReasonCompound {
 				t.Fatalf("verdict=(decision=%d command=%q reason=%q), want a compound deny", verdict.decision, verdict.command, verdict.reason)
 			}
@@ -269,6 +269,27 @@ func TestPreToolUseDecisionRunsLiteralWorktreeChain(t *testing.T) {
 	}
 }
 
+// TestLiteralWorktreeCompoundPreservesExplicitHead は貸出元の HEAD が既定ブランチと異なる場合を確認する。
+func TestLiteralWorktreeCompoundPreservesExplicitHead(t *testing.T) {
+	fixture := newBranchPolicyFixture(t)
+	fixtureGit(t, fixture.detached, "commit", "-q", "--allow-empty", "-m", "detached commit")
+	detached := literalWorktreeHead(t.Context(), fixture.detached)
+	if detached == "" || detached == literalWorktreeHead(t.Context(), fixture.main) {
+		t.Fatal("fixture must have a detached HEAD different from main")
+	}
+
+	command := `git worktree add --detach next HEAD && cd ./next`
+	location := worktreeAddLocation{cwd: fixture.detached, root: fixture.detached}
+	verdict := classifyWorktreeAddCommand(t.Context(), command, location)
+	if verdict.decision != worktreeAddRewrite || !strings.Contains(verdict.command, "wx new --commit "+detached+")") {
+		t.Fatalf("rewrite = %+v, want detached HEAD %s", verdict, detached)
+	}
+	verdict = classifyWorktreeAddCommand(t.Context(), "true && "+command, location)
+	if verdict.decision != worktreeAddDeny {
+		t.Fatalf("rewrite after a preceding command = %+v, want deny", verdict)
+	}
+}
+
 // TestPreToolUseDecisionChecksBranchAttachAfterCompoundRewrite は、連結を書き換えて allow を返す前に
 // 書き換え後の command をブランチ attach の判定へ通すことを確認する。
 func TestPreToolUseDecisionChecksBranchAttachAfterCompoundRewrite(t *testing.T) {
@@ -287,7 +308,7 @@ func TestPreToolUseDecisionChecksBranchAttachAfterCompoundRewrite(t *testing.T) 
 		return output
 	}
 	for _, path := range []string{`"$WT"`, "x"} {
-		attach := `git worktree add --detach ` + path + ` HEAD && cd ` + path + ` && git checkout -b topic`
+		attach := `git worktree add --detach ` + path + ` origin/main && cd ` + path + ` && git checkout -b topic`
 		if output := decide(t, attach, true); output.HookSpecificOutput.PermissionDecision != "deny" {
 			t.Fatalf("managed attach after rewrite=%+v, want deny", output.HookSpecificOutput)
 		}
@@ -297,7 +318,7 @@ func TestPreToolUseDecisionChecksBranchAttachAfterCompoundRewrite(t *testing.T) 
 	}
 	restore := "checkout -- tracked.txt"
 	for _, tc := range []struct{ path, decision string }{{"x", "allow"}, {`"$WT"`, "deny"}} {
-		command := "git worktree add --detach " + tc.path + " HEAD && cd " + tc.path + " && git " + restore
+		command := "git worktree add --detach " + tc.path + " origin/main && cd " + tc.path + " && git " + restore
 		if got := decide(t, command, true).HookSpecificOutput.PermissionDecision; got != tc.decision {
 			t.Errorf("path restore after rewrite = %s, want %s for %s", got, tc.decision, tc.path)
 		}

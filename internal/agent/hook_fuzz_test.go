@@ -66,7 +66,7 @@ func FuzzHookPayload(f *testing.F) {
 // 書き換え先は次の shell がそのまま解釈するため、引用の要る文字を含んではいけない。
 func checkWorktreeAddHookOutput(t *testing.T, payload []byte) {
 	t.Helper()
-	output, ok := worktreeAddHookOutput(payload, "/wx/slot")
+	output, ok := worktreeAddHookOutput(t.Context(), payload, "/wx/slot")
 	if !ok {
 		if output.SystemMessage != "" || output.HookSpecificOutput.PermissionDecision != "" {
 			t.Fatalf("ignored payload returned output %+v", output)

@@ -1,11 +1,14 @@
 package agent
 
 import (
+	"context"
 	"errors"
 	"os"
 	"path/filepath"
 	"regexp"
 	"strings"
+
+	"github.com/HappyOnigiri/WorktreeX/internal/gitx"
 )
 
 // compoundCommand は連結を区切りで分けた 1 つの単純コマンドである。
@@ -53,7 +56,7 @@ const (
 // rewriteCompoundWorktreeAdd は連結の中の git worktree add 1 つを wx new へ写す。
 // 前にある cd は追い、workspace 内に解決できる場合だけ受け付ける。
 // 第 2 戻り値は生成した cd の引数の位置で、生成しなかった場合は 0 を返す。
-func rewriteCompoundWorktreeAdd(command string, location worktreeAddLocation) (string, int, bool) {
+func rewriteCompoundWorktreeAdd(ctx context.Context, command string, location worktreeAddLocation) (string, int, bool) {
 	tokens, ok := lexPolicyCommand(command)
 	if !ok {
 		return "", 0, false
@@ -93,9 +96,41 @@ func rewriteCompoundWorktreeAdd(command string, location worktreeAddLocation) (s
 		if len(candidate.directories) == 0 && (walk.moved || !verdict.path.expanded) && !walk.inRepository() {
 			return "", 0, false
 		}
+		if !verdict.path.expanded && verdict.startPoint == "HEAD" {
+			// 先行コマンドがあると、実行時の HEAD が解析時と同じか分からない。
+			if index != 0 {
+				return "", 0, false
+			}
+			directory := verdict.directory
+			if directory == "" {
+				directory = walk.directory
+			}
+			oid := literalWorktreeHead(ctx, directory)
+			if oid == "" {
+				return "", 0, false
+			}
+			verdict.command = "wx new --commit " + oid
+		}
 		return compoundReplacement(command, verdict, current, commands[index+1:], walk.directory)
 	}
 	return "", 0, false
+}
+
+// literalWorktreeHead は明示された HEAD を、元のリポジトリのコミットに固定する。
+func literalWorktreeHead(ctx context.Context, directory string) string {
+	if directory == "" {
+		return ""
+	}
+	runner := &gitx.Runner{Timeout: branchPolicyGitTimeout}
+	result, err := runner.Run(ctx, directory, "rev-parse", "--verify", "HEAD^{commit}")
+	if err != nil {
+		return ""
+	}
+	oid := strings.TrimSpace(result.Stdout)
+	if len(oid) != 40 || !gitx.IsHexObjectName(oid) {
+		return ""
+	}
+	return oid
 }
 
 // scanCompoundTokens は置換の本文まで含めて git worktree add の数を数え、実行内容を静的に追えなくするコマンドの有無を返す。

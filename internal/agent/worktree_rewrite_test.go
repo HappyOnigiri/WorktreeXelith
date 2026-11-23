@@ -78,7 +78,7 @@ func TestClassifyWorktreeAddCommand(t *testing.T) {
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			verdict := classifyWorktreeAddCommand(test.command, worktreeAddLocation{})
+			verdict := classifyWorktreeAddCommand(t.Context(), test.command, worktreeAddLocation{})
 			if verdict.decision != test.decision {
 				t.Fatalf("decision=%d, want %d (reason=%q command=%q)", verdict.decision, test.decision, verdict.reason, verdict.command)
 			}
@@ -172,7 +172,7 @@ func TestCommandRunsInWorkspace(t *testing.T) {
 // 部分 merge を前提にすると description や timeout のような未知フィールドが落ちる。
 func TestWorktreeAddHookOutputKeepsUnknownToolInputFields(t *testing.T) {
 	payload := []byte(`{"cwd":"/wx/slot","tool_name":"Bash","tool_input":{"command":"git worktree add x feature","description":"branch out","timeout":120}}`)
-	output, ok := worktreeAddHookOutput(payload, "/wx/slot")
+	output, ok := worktreeAddHookOutput(t.Context(), payload, "/wx/slot")
 	if !ok {
 		t.Fatal("payload was not rewritten")
 	}
@@ -209,7 +209,7 @@ func TestWorktreeAddHookOutputResolvesDirectoryFromPayloadCWD(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	output, ok := worktreeAddHookOutput(payload, root)
+	output, ok := worktreeAddHookOutput(t.Context(), payload, root)
 	if !ok || output.HookSpecificOutput.PermissionDecision != "allow" {
 		t.Fatalf("output=%+v ok=%v, want a rewrite", output.HookSpecificOutput, ok)
 	}
@@ -231,7 +231,7 @@ func TestWorktreeAddHookOutputIgnoresUnusablePayloads(t *testing.T) {
 		`{"tool_input":{"command":["git","worktree","add","x"]}}`,
 		`{"cwd":"/elsewhere","tool_input":{"command":"git worktree add x"}}`,
 	} {
-		if _, ok := worktreeAddHookOutput([]byte(payload), "/wx/slot"); ok {
+		if _, ok := worktreeAddHookOutput(t.Context(), []byte(payload), "/wx/slot"); ok {
 			t.Fatalf("payload %q produced a decision", payload)
 		}
 	}
@@ -239,7 +239,7 @@ func TestWorktreeAddHookOutputIgnoresUnusablePayloads(t *testing.T) {
 
 func TestWorktreeAddHookDeniesWithoutUpdatedInput(t *testing.T) {
 	payload := []byte(`{"cwd":"/wx/slot","tool_input":{"command":"git worktree add -b feature x"}}`)
-	output, ok := worktreeAddHookOutput(payload, "/wx/slot")
+	output, ok := worktreeAddHookOutput(t.Context(), payload, "/wx/slot")
 	if !ok {
 		t.Fatal("branch creation was not denied")
 	}
