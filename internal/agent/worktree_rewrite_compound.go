@@ -335,7 +335,7 @@ func literalWorktreePath(word shellWord, cwd string) string {
 // literalWorktreeSuffix は貸出先からの相対操作を残す。元の作成先を参照し得る語や展開があれば拒否する。
 // パイプは連結全体が cd の成功を待つが、改行やセミコロンは失敗時も次のコマンドを走らせる。
 func literalWorktreeSuffix(commands []compoundCommand, basename string) bool {
-	originalPath, err := regexp.Compile(`(^|[^[:alnum:]_.-])(?:` + regexp.QuoteMeta(basename) + `|\.\.)([^[:alnum:]_.-]|$)`)
+	originalPath, err := regexp.Compile(`(?i)(^|[^[:alnum:]_.-])(?:` + regexp.QuoteMeta(basename) + `|\.\.)([^[:alnum:]_.-]|$)`)
 	if err != nil {
 		return false
 	}

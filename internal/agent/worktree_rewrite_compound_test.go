@@ -130,6 +130,7 @@ func TestClassifyWorktreeAddCommandKeepsUnsafeCompoundsDenied(t *testing.T) {
 		{name: "or after suffix", cwd: server, command: `git worktree add x && cd x && true || pwd`},
 		{name: "newline after suffix", cwd: server, command: "git worktree add x && cd x && true\npwd"},
 		{name: "literal path reused in argument", cwd: server, command: `git worktree add /tmp/x && cd /tmp/x && tool --path=/tmp/x/file`},
+		{name: "literal path reused with different case", cwd: server, command: `git worktree add /tmp/old-tree && cd /tmp/old-tree && cat /tmp/OLD-TREE/file`},
 		{name: "literal path reused in redirect", cwd: server, command: `git worktree add /tmp/x && cd /tmp/x && echo yes >/tmp/x/file`},
 		{name: "literal path hidden in heredoc", cwd: server, command: "git worktree add x && cd x && cat <<'EOF'\nx\nEOF"},
 		{name: "literal path through expansion", cwd: server, command: `git worktree add x && cd x && cat "$OLDPWD/x"`},
