@@ -405,16 +405,19 @@ func policyGitInvocations(tokens []policyToken, cwd string) (invocations []polic
 	if base == "" {
 		return nil, false
 	}
-	// Bash の cd は有効な論理 PWD を引き継ぐ。実パスと異なる起点からは追わない。
-	pwd := os.Getenv("PWD")
-	known := pwd == "" || pwd == base || resolvePolicyDirectory(commandWord{value: pwd}, "/") != base
-	return policyGitInvocationsFrom(tokens, base, known)
+	return policyGitInvocationsFrom(tokens, base, true)
 }
 
 // policyGitInvocationsFrom は解決済みの base から tokens を追う。base が空なら実行先を決められない呼び出しとして返す。
 func policyGitInvocationsFrom(tokens []policyToken, base string, bashContextKnown bool) (invocations []policyGitInvocation, resolved bool) {
 	// || の後では、直前の cd が実行されなかった場合にも後続へ進み得る。
 	bashContextKnown = bashContextKnown && !slices.ContainsFunc(tokens, func(token policyToken) bool { return token.operator == "||" })
+	logicalCWDKnown := false
+	if bashContextKnown {
+		// cd は有効な論理 PWD を引き継ぐ。表記が実パスと異なる起点からは追わない。
+		pwd := os.Getenv("PWD")
+		logicalCWDKnown = pwd == "" || pwd == base || resolvePolicyDirectory(commandWord{value: pwd}, "/") != base
+	}
 	var stack []policyFrame
 	var segment []commandWord
 	redirectTarget := false
@@ -432,14 +435,14 @@ func policyGitInvocationsFrom(tokens []policyToken, base string, bashContextKnow
 		}
 		previous := base
 		if bashContextKnown && len(parts) > 0 {
-			if inner, ok := policyBashInvocation(parts, base); ok {
+			if inner, ok := policyBashInvocation(parts, base, logicalCWDKnown); ok {
 				invocations = append(invocations, inner)
 				bashContextKnown = false
 				piped = next.kind == policyTokenPipe
 				return true
 			}
 			// 子 Bash に渡す cwd は、ここまでの cd が成功した場合だけ引き継げる。
-			bashContextKnown = next.operator == "&&" && literalPolicyCDTarget(parts, base) != ""
+			bashContextKnown = logicalCWDKnown && next.operator == "&&" && literalPolicyCDTarget(parts, base) != ""
 		}
 		invocation, isGit, ok := policySegment(parts, &base)
 		if ok && isGit {

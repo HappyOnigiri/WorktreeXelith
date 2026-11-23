@@ -11,7 +11,7 @@ import (
 
 // policyBashInvocation は引数が固定の bash -c から、引き継いだ cwd で走る Git 呼び出しを読む。
 // 本文はリテラルな cd を && で連ね、最後に Git を呼ぶ形に限る。
-func policyBashInvocation(parts []commandWord, base string) (policyGitInvocation, bool) {
+func policyBashInvocation(parts []commandWord, base string, logicalCWDKnown bool) (policyGitInvocation, bool) {
 	if len(parts) != 3 || (parts[0].value != "bash" && parts[0].value != "/bin/bash") ||
 		parts[1].value != "-c" || !literalPolicyWord(parts[0]) || !literalPolicyWord(parts[1]) || !literalPolicyWord(parts[2]) {
 		return policyGitInvocation{}, false
@@ -36,6 +36,9 @@ func policyBashInvocation(parts []commandWord, base string) (policyGitInvocation
 		case token.kind == policyTokenWord && literalPolicyWord(token.word):
 			words = append(words, token.word)
 		case token.operator == "&&":
+			if !logicalCWDKnown {
+				return policyGitInvocation{}, false
+			}
 			base = literalPolicyCDTarget(words, base)
 			if base == "" {
 				return policyGitInvocation{}, false

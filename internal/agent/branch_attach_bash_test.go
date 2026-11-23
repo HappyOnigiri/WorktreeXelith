@@ -39,6 +39,18 @@ func TestClassifyBranchAttachInLiteralBashCommand(t *testing.T) {
 			{command: inline(detach), cwd: fixture.detached, want: branchPolicyUnresolved},
 		})
 	})
+	t.Run("logical PWD", func(t *testing.T) {
+		link := filepath.Join(fixture.tmp, "linked")
+		if err := os.Symlink(fixture.detached, link); err != nil {
+			t.Fatal(err)
+		}
+		t.Setenv("PWD", link)
+		runBranchPolicyCases(t, []branchPolicyCase{
+			{command: inline(detach), cwd: fixture.detached, want: branchPolicyAllow},
+			{command: inline("cd ../detached && " + detach), cwd: fixture.detached, want: branchPolicyUnresolved},
+			{command: "cd ../detached && " + inline(detach), cwd: fixture.detached, want: branchPolicyUnresolved},
+		})
+	})
 	t.Setenv("BASH_ENV", filepath.Join(fixture.tmp, "startup"))
 	runBranchPolicyCases(t, []branchPolicyCase{
 		{command: inline(detach), cwd: fixture.detached, want: branchPolicyUnresolved},
