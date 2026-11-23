@@ -238,7 +238,16 @@ func (w *compoundWalk) follow(words []shellWord, current compoundCommand) bool {
 	if shellReservedWords[words[index].value] {
 		return false
 	}
-	if filepath.Base(words[index].value) != "cd" {
+	if words[index].value == "command" {
+		index++
+		for index < len(words) && words[index].value == "-p" {
+			index++
+		}
+		if index < len(words) && words[index].value == "--" {
+			index++
+		}
+	}
+	if index == len(words) || filepath.Base(words[index].value) != "cd" {
 		return true
 	}
 	// パイプの中の cd は別プロセスで走り、`||` の後の cd は走るとは限らない。

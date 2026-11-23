@@ -36,6 +36,10 @@ func TestClassifyWorktreeAddCommandRewritesCompound(t *testing.T) {
 	root, _ := compoundFixture(t)
 	server := filepath.Join(root, "server")
 	oid := "3139d393c8470d47e7cf30810580acad50a907e7"
+	nested := filepath.Join(root, "web", "server")
+	if err := os.MkdirAll(filepath.Join(nested, ".git"), 0o700); err != nil {
+		t.Fatal(err)
+	}
 	if err := os.Symlink("server", filepath.Join(root, "server-link")); err != nil {
 		t.Fatal(err)
 	}
@@ -65,6 +69,12 @@ func TestClassifyWorktreeAddCommandRewritesCompound(t *testing.T) {
 			cwd:     root,
 			command: `git -C server-link worktree add new/x && cd ./server-link/new/x`,
 			rewrite: `wx_worktree_path=$(cd '` + server + `' && wx new) && echo "wx_worktree_path=$wx_worktree_path" && cd -- "$wx_worktree_path"`,
+		},
+		{
+			name:    "command cd before a relative repository option",
+			cwd:     root,
+			command: `command -p -- cd web && git -C server worktree add /tmp/x && cd /tmp/x`,
+			rewrite: `command -p -- cd web && wx_worktree_path=$(cd '` + nested + `' && wx new) && echo "wx_worktree_path=$wx_worktree_path" && cd -- "$wx_worktree_path"`,
 		},
 		{
 			name:    "cd into a repository before the candidate",
