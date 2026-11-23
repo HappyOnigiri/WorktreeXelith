@@ -13,7 +13,7 @@ import (
 var fullGitObjectID = regexp.MustCompile(`^(?:[0-9a-fA-F]{40}|[0-9a-fA-F]{64})$`)
 
 // detachBranchInspection は貸出範囲内で attach と同じ実行先のコミットを読む && 連結だけを書き換える。
-// --detach と解決済みの OID を渡し、後続の原文と checkout 失敗時に止まる && を残す。
+// ローカル ref の先端は実行時に取得し、切り替えに失敗したら元の && で後続を止める。
 func detachBranchInspection(ctx context.Context, runner *gitx.Runner, command, cwd, workspaceRoot string) (string, bool) {
 	segments := branchInspectionSegments(command)
 	if len(segments) < 2 {
@@ -52,17 +52,18 @@ func detachBranchInspection(ctx context.Context, runner *gitx.Runner, command, c
 	}
 	ref := "refs/heads/" + branch
 	// for-each-ref は子の ref にも一致し得るので、完全一致したローカルブランチの commit だけを採る。
-	result, err := runner.Run(ctx, attach.target, "for-each-ref", "--format=%(refname) %(objecttype) %(objectname)", "--", ref)
+	result, err := runner.Run(ctx, attach.target, "for-each-ref", "--format=%(refname) %(objecttype)", "--", ref)
 	if err != nil {
 		return "", false
 	}
-	for _, line := range strings.Split(result.Stdout, "\n") {
-		if oid, ok := strings.CutPrefix(line, ref+" commit "); ok && fullGitObjectID.MatchString(oid) {
-			arg := segments[0][len(segments[0])-1]
-			return command[:arg.start] + "--detach " + shellSingleQuote(oid+"^{commit}") + command[arg.end:], true
-		}
+	if !slices.Contains(strings.Split(result.Stdout, "\n"), ref+" commit") {
+		return "", false
 	}
-	return "", false
+	// show-ref --verify は切り替え前にブランチが消えても、同名の tag などに解決しない。
+	// 空の出力に ^{commit} を付けた引数は commit として解決できず、切り替えが失敗する。
+	lookup := "$(git -C " + shellSingleQuote(attach.target) + " show-ref --verify --hash -- " + shellSingleQuote(ref) + ")"
+	arg := segments[0][len(segments[0])-1]
+	return command[:arg.start] + `--detach "` + lookup + `^{commit}"` + command[arg.end:], true
 }
 
 // branchInspectionSegments は静的な単純コマンドだけを && で区切る。空の要素やリダイレクトなどは受け付けない。

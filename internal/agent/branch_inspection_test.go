@@ -52,12 +52,15 @@ func TestPreToolUseDetachesBranchForCommitInspection(t *testing.T) {
 	}
 	for _, test := range []struct {
 		name, cwd, command, inspection, fixtureName string
+		removeBranch                                bool
 	}{
-		{"checkout", fixture.detached, "git checkout 'other'", "git rev-parse --verify HEAD", "claude-2.1.258-pre-tool-use.json"},
-		{"switch", fixture.tmp, "cd " + shellSingleQuote(fixture.detached) + " && git switch other", "git show -s --format=%H HEAD", "codex-0.151.0-pre-tool-use-exec.json"},
-		{"git-C", fixture.tmp, "git -C detached checkout other", "git -C detached log -1 --format=%H", "claude-2.1.258-pre-tool-use.json"},
+		{"checkout", fixture.detached, "git checkout 'other'", "git rev-parse --verify HEAD", "claude-2.1.258-pre-tool-use.json", false},
+		{"switch", fixture.tmp, "cd " + shellSingleQuote(fixture.detached) + " && git switch other", "git show -s --format=%H HEAD", "codex-0.151.0-pre-tool-use-exec.json", false},
+		{"git-C", fixture.tmp, "git -C detached checkout other", "git -C detached log -1 --format=%H", "claude-2.1.258-pre-tool-use.json", false},
+		{"deleted-branch", fixture.detached, "git " + "switch other", "git rev-parse --verify HEAD", "claude-2.1.258-pre-tool-use.json", true},
 	} {
 		t.Run(test.name, func(t *testing.T) {
+			fixtureGit(t, fixture.main, "branch", "-f", "other", "HEAD^")
 			fixtureGit(t, fixture.detached, "checkout", "--detach", strings.TrimSpace(tip.Stdout)+"^")
 			command := test.command + " && " + test.inspection
 			payload := recordedPayloadWithCommand(t, test.fixtureName, command)
@@ -74,6 +77,13 @@ func TestPreToolUseDetachesBranchForCommitInspection(t *testing.T) {
 			if !strings.HasSuffix(rewritten, " && "+test.inspection) {
 				t.Fatalf("rewritten command changed the inspection: %q", rewritten)
 			}
+			if test.removeBranch {
+				fixtureGit(t, fixture.main, "branch", "-D", "other")
+				fixtureGit(t, fixture.main, "tag", "refs/heads/other", "HEAD")
+				t.Cleanup(func() { fixtureGit(t, fixture.main, "branch", "other", "HEAD") })
+			} else {
+				fixtureGit(t, fixture.main, "branch", "-f", "other", "HEAD")
+			}
 			shell := exec.Command("bash", "-c", rewritten)
 			shell.Dir = test.cwd
 			for _, entry := range os.Environ() {
@@ -83,6 +93,12 @@ func TestPreToolUseDetachesBranchForCommitInspection(t *testing.T) {
 			}
 			shell.Env = append(shell.Env, "GIT_CONFIG_GLOBAL=/dev/null", "GIT_CONFIG_NOSYSTEM=1")
 			got, err := shell.Output()
+			if test.removeBranch {
+				if err == nil || len(got) != 0 {
+					t.Fatalf("inspection ran after the branch was removed: output=%q err=%v", got, err)
+				}
+				return
+			}
 			if err != nil || strings.TrimSpace(string(got)) != strings.TrimSpace(tip.Stdout) {
 				t.Fatalf("inspection output=%q err=%v, want %q", got, err, tip.Stdout)
 			}
