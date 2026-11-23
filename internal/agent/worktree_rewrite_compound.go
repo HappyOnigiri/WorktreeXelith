@@ -337,7 +337,7 @@ func literalWorktreeConsumer(verdict worktreeAddVerdict, following []compoundCom
 	if target == "" || target != literalWorktreePath(policyShellWord(args[0].word), cwd) {
 		return false
 	}
-	return literalWorktreeSuffix(following[1:], filepath.Base(target))
+	return literalWorktreeSuffix(following[1:], target)
 }
 
 // literalWorktreePath は存在しない作成先も比べるため、親の symlink によって意味が変わる .. を除いて比較する。
@@ -389,7 +389,8 @@ func resolveLiteralWorktreePath(path string) string {
 
 // literalWorktreeSuffix は貸出先からの相対操作を残す。元の作成先を参照し得る語や展開があれば拒否する。
 // パイプは連結全体が cd の成功を待つが、改行やセミコロンは失敗時も次のコマンドを走らせる。
-func literalWorktreeSuffix(commands []compoundCommand, basename string) bool {
+func literalWorktreeSuffix(commands []compoundCommand, target string) bool {
+	basename := filepath.Base(target)
 	originalPath, err := regexp.Compile(`(?i)(^|[^[:alnum:]_.-])(?:` + regexp.QuoteMeta(basename) + `|\.\.)([^[:alnum:]_.-]|$)`)
 	if err != nil {
 		return false
@@ -407,6 +408,16 @@ func literalWorktreeSuffix(commands []compoundCommand, basename string) bool {
 			word := token.word
 			if !word.static() || word.tilde || originalPath.MatchString(word.value) {
 				return false
+			}
+			path := word.value
+			if !filepath.IsAbs(path) {
+				_, path, _ = strings.Cut(path, "=")
+			}
+			if filepath.IsAbs(path) {
+				resolved := resolveLiteralWorktreePath(path)
+				if resolved == "" || withinDirectory(strings.ToLower(target), strings.ToLower(resolved)) {
+					return false
+				}
 			}
 		}
 	}
