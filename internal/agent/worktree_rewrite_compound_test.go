@@ -46,6 +46,12 @@ func TestClassifyWorktreeAddCommandRewritesCompound(t *testing.T) {
 			rewrite: `wx_worktree_path=$(` + compoundCDPATHGuard + `wx new) && echo "wx_worktree_path=$wx_worktree_path" && cd -- "$wx_worktree_path"`,
 		},
 		{
+			name:    "literal path with a continued line",
+			cwd:     server,
+			command: "git worktree add x &&\n  cd ./x &&\n  cat marker",
+			rewrite: "wx_worktree_path=$(wx new) && echo \"wx_worktree_path=$wx_worktree_path\" && cd -- \"$wx_worktree_path\" &&\n  cat marker",
+		},
+		{
 			name:    "quoted path and repository option",
 			cwd:     root,
 			command: `git -C server worktree add --detach 'new tree' origin/main && cd -- "./server/new tree" && cat file 2>/dev/null | head`,

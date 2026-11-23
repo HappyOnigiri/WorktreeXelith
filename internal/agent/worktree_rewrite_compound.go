@@ -147,6 +147,10 @@ func splitCompoundCommands(tokens []policyToken) ([]compoundCommand, bool) {
 	nested := false
 	substitution := 0
 	closeCommand := func(after string) {
+		// && の直後の改行は同じ連結を続ける。
+		if after == "\n" && current.before == "&&" && len(current.words) == 0 && current.plain() {
+			return
+		}
 		current.after = after
 		if len(current.words) > 0 {
 			commands = append(commands, current)
