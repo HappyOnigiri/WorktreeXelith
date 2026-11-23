@@ -50,7 +50,7 @@ var unsafeGitEnvironmentPrefixes = []string{"GIT_WORK_TREE=", "GIT_DIR=", "GIT_I
 // branchAttachHookOutput は wx session の Bash 呼び出しのうち、linked worktree へブランチを attach する git を deny する。
 // main worktree と Git の管理下にないディレクトリでは何もしない。
 // 対象の git 呼び出しを含むのに実行先か引数を静的に決められない command は、見逃しを防ぐため deny に倒す。
-func branchAttachHookOutput(ctx context.Context, payload []byte) (preToolUseHookOutput, bool) {
+func branchAttachHookOutput(ctx context.Context, payload []byte, leaseDirectoryOffset int) (preToolUseHookOutput, bool) {
 	// 全ツール呼び出しで走るため、関係しない payload は JSON を解く前に落とす。
 	raw := string(payload)
 	if !strings.Contains(raw, "checkout") && !strings.Contains(raw, "switch") && !strings.Contains(raw, "symbolic-ref") {
@@ -73,7 +73,7 @@ func branchAttachHookOutput(ctx context.Context, payload []byte) (preToolUseHook
 		cwd, _ = os.Getwd()
 	}
 	runner := &gitx.Runner{Timeout: branchPolicyGitTimeout}
-	switch classifyBranchAttach(ctx, runner, command, cwd) {
+	switch classifyBranchAttach(ctx, runner, command, cwd, leaseDirectoryOffset) {
 	case branchPolicyAttach:
 		return denyPreToolUse(branchAttachReason, branchAttachSystemMessage), true
 	case branchPolicyUnresolved:
@@ -93,7 +93,7 @@ const (
 
 // classifyBranchAttach は command 中の git 呼び出しを実行先ごとに判定する。
 // 実行先が linked worktree である呼び出しだけを attach の判定にかけ、最初に見つかった違反を返す。
-func classifyBranchAttach(ctx context.Context, runner *gitx.Runner, command, cwd string) branchPolicyVerdict {
+func classifyBranchAttach(ctx context.Context, runner *gitx.Runner, command, cwd string, leaseDirectoryOffset int) branchPolicyVerdict {
 	// 解析できない command は、対象の git 呼び出しらしい形がある場合だけ deny に倒す。
 	unresolved := branchPolicyAllow
 	if branchPolicyGitCommand.MatchString(command) {
@@ -103,6 +103,14 @@ func classifyBranchAttach(ctx context.Context, runner *gitx.Runner, command, cwd
 	if !wellFormed {
 		return unresolved
 	}
+	if leaseDirectoryOffset > 0 {
+		for index := range tokens {
+			if tokens[index].kind == policyTokenWord && tokens[index].start == leaseDirectoryOffset {
+				tokens[index].word.leasedDirectory = true
+				break
+			}
+		}
+	}
 	invocations, resolved := policyGitInvocations(tokens, cwd)
 	if !resolved {
 		return unresolved
@@ -110,6 +118,15 @@ func classifyBranchAttach(ctx context.Context, runner *gitx.Runner, command, cwd
 	for _, invocation := range invocations {
 		if !branchPolicySubcommands[invocation.subcommand] {
 			continue
+		}
+		if invocation.target == policyLeasedDirectory {
+			// 貸出先がまだ存在しなくても、明示的なパス復元は HEAD を動かさない。
+			if invocation.subcommand == "checkout" && !invocation.dynamic &&
+				len(invocation.args) > 1 && invocation.args[0].value == "--" &&
+				!slices.ContainsFunc(invocation.args[1:], func(arg commandWord) bool { return !arg.static() }) {
+				continue
+			}
+			return branchPolicyUnresolved
 		}
 		if invocation.target == "" {
 			return branchPolicyUnresolved

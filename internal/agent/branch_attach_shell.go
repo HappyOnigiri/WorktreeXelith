@@ -13,6 +13,8 @@ type commandWord struct {
 	quoted   bool
 	expanded bool
 	globbed  bool
+	// leasedDirectory はフックが生成した cd の引数にだけ付ける。
+	leasedDirectory bool
 	// tilde は語が引用されていない ~ で始まり、shell がホームへ展開し得ることを表す。
 	tilde bool
 	// substitutions は語の中の二重引用符内の `$(...)` とバッククオートの本文で、語とは別のサブシェルとして判定する。
@@ -386,6 +388,9 @@ func isDigits(value string) bool {
 	return true
 }
 
+// policyLeasedDirectory は解析時点では実パスがない貸出先を表す。
+const policyLeasedDirectory = "\x00"
+
 // policyGitInvocation は 1 つの git 呼び出しで、target が空なら実行先を静的に決められない。
 type policyGitInvocation struct {
 	subcommand string
@@ -547,7 +552,9 @@ func policySegment(parts []commandWord, base *string) (invocation policyGitInvoc
 		if valueIndex >= len(parts) || strings.HasPrefix(parts[valueIndex].value, "-") {
 			return policyGitInvocation{}, false, false
 		}
-		if *base != "" {
+		if parts[valueIndex].leasedDirectory {
+			*base = policyLeasedDirectory
+		} else if *base != "" {
 			*base = resolvePolicyDirectory(parts[valueIndex], *base)
 		}
 		return policyGitInvocation{}, false, true

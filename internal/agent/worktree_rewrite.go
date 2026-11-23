@@ -31,8 +31,9 @@ type preToolUseHookSpecificOutput struct {
 }
 
 type preToolUseHookOutput struct {
-	HookSpecificOutput preToolUseHookSpecificOutput `json:"hookSpecificOutput"`
-	SystemMessage      string                       `json:"systemMessage,omitempty"`
+	HookSpecificOutput   preToolUseHookSpecificOutput `json:"hookSpecificOutput"`
+	SystemMessage        string                       `json:"systemMessage,omitempty"`
+	leaseDirectoryOffset int
 }
 
 const (
@@ -100,7 +101,8 @@ type worktreeAddVerdict struct {
 	path      shellWord
 	directory string
 	// compound は連結の一部だけを書き換えたことを表し、agent への案内を変える。
-	compound bool
+	compound             bool
+	leaseDirectoryOffset int
 }
 
 func ignoreWorktreeAdd() worktreeAddVerdict {
@@ -158,7 +160,8 @@ func worktreeAddHookOutput(payload []byte, workspaceRoot string) (preToolUseHook
 				AdditionalContext:        guidance,
 				UpdatedInput:             updated,
 			},
-			SystemMessage: rewriteSystemMessage,
+			SystemMessage:        rewriteSystemMessage,
+			leaseDirectoryOffset: verdict.leaseDirectoryOffset,
 		}, true
 	case worktreeAddDeny:
 		return denyPreToolUse(verdict.reason+" "+denyGuidance[verdict.reason], denySystemMessage), true
@@ -203,7 +206,8 @@ func preToolUseDecision(ctx context.Context, payload []byte, workspaceRoot strin
 	}
 	if output, ok := worktreeAddHookOutput(payload, workspaceRoot); ok || !managed {
 		if ok && managed && output.HookSpecificOutput.UpdatedInput != nil {
-			if denied, deny := branchAttachHookOutput(ctx, rewrittenPayload(payload, output.HookSpecificOutput.UpdatedInput)); deny {
+			rewritten := rewrittenPayload(payload, output.HookSpecificOutput.UpdatedInput)
+			if denied, deny := branchAttachHookOutput(ctx, rewritten, output.leaseDirectoryOffset); deny {
 				return denied, true
 			}
 		}
@@ -212,7 +216,7 @@ func preToolUseDecision(ctx context.Context, payload []byte, workspaceRoot strin
 	if output, ok := subagentIsolationHookOutput(payload); ok {
 		return output, true
 	}
-	return branchAttachHookOutput(ctx, payload)
+	return branchAttachHookOutput(ctx, payload, 0)
 }
 
 // rewrittenPayload は payload の tool_input を書き換え後の入力へ差し替える。組み立てに失敗すれば元の payload を返す。
@@ -274,8 +278,8 @@ func classifyWorktreeAddCommand(command string, location worktreeAddLocation) wo
 	case !wellFormed:
 		return denyWorktreeAdd(denyReasonUnsupported)
 	case candidates > 1 || len(segments) > 1:
-		if command, ok := rewriteCompoundWorktreeAdd(command, location); ok {
-			return worktreeAddVerdict{decision: worktreeAddRewrite, command: command, compound: true}
+		if command, offset, ok := rewriteCompoundWorktreeAdd(command, location); ok {
+			return worktreeAddVerdict{decision: worktreeAddRewrite, command: command, compound: true, leaseDirectoryOffset: offset}
 		}
 		return denyWorktreeAdd(denyReasonCompound)
 	}

@@ -51,51 +51,51 @@ const (
 )
 
 // rewriteCompoundWorktreeAdd は連結の中の git worktree add 1 つを wx new へ写す。
-// 変数は貸出先で上書きし、固定パスは直後の cd と一緒に置き換える。
 // 前にある cd は追い、workspace 内に解決できる場合だけ受け付ける。
-func rewriteCompoundWorktreeAdd(command string, location worktreeAddLocation) (string, bool) {
+// 第 2 戻り値は生成した cd の引数の位置で、生成しなかった場合は 0 を返す。
+func rewriteCompoundWorktreeAdd(command string, location worktreeAddLocation) (string, int, bool) {
 	tokens, ok := lexPolicyCommand(command)
 	if !ok {
-		return "", false
+		return "", 0, false
 	}
 	if candidates, unsafe := scanCompoundTokens(tokens); candidates != 1 || unsafe {
-		return "", false
+		return "", 0, false
 	}
 	commands, ok := splitCompoundCommands(tokens)
 	if !ok {
-		return "", false
+		return "", 0, false
 	}
 	walk := compoundWalk{directory: location.cwd, root: location.root}
 	for index, current := range commands {
 		if !walk.admit(current) {
-			return "", false
+			return "", 0, false
 		}
 		words := policyShellWords(current.words)
 		candidate, isCandidate := gitWorktreeAddArguments(words)
 		if !isCandidate {
 			if !walk.follow(words, current) {
-				return "", false
+				return "", 0, false
 			}
 			continue
 		}
 		switch current.before {
 		case "", ";", "&&", "\n":
 		default:
-			return "", false
+			return "", 0, false
 		}
 		if !current.plain() || (current.after != "" && current.after != "&&") {
-			return "", false
+			return "", 0, false
 		}
 		verdict := rewriteWorktreeAddCandidate(candidate, worktreeAddLocation{cwd: walk.directory, root: location.root})
 		if verdict.decision != worktreeAddRewrite {
-			return "", false
+			return "", 0, false
 		}
 		if len(candidate.directories) == 0 && (walk.moved || !verdict.path.expanded) && !walk.inRepository() {
-			return "", false
+			return "", 0, false
 		}
 		return compoundReplacement(command, verdict, current, commands[index+1:], walk.directory)
 	}
-	return "", false
+	return "", 0, false
 }
 
 // scanCompoundTokens は置換の本文まで含めて git worktree add の数を数え、実行内容を静的に追えなくするコマンドの有無を返す。
@@ -271,27 +271,27 @@ func (w *compoundWalk) follow(words []shellWord, current compoundCommand) bool {
 }
 
 // compoundReplacement は貸出先を表示し、固定パスの場合は続く cd の行き先にも渡す。
-func compoundReplacement(command string, verdict worktreeAddVerdict, current compoundCommand, following []compoundCommand, cwd string) (string, bool) {
+func compoundReplacement(command string, verdict worktreeAddVerdict, current compoundCommand, following []compoundCommand, cwd string) (string, int, bool) {
 	start := current.words[0].start
 	end := current.words[len(current.words)-1].end
-	var name, changeDirectory, leaseGuard string
+	var name, leaseGuard string
 	if verdict.path.expanded {
 		match := compoundPathVariable.FindStringSubmatch(verdict.path.value)
 		if match == nil {
-			return "", false
+			return "", 0, false
 		}
 		name = match[1] + match[2]
 		if compoundReservedVariables[name] {
-			return "", false
+			return "", 0, false
 		}
 	} else {
 		name = compoundLiteralPathVariable
 		if current.after != "&&" || strings.Contains(command, name) || !literalWorktreeConsumer(verdict, following, cwd) {
-			return "", false
+			return "", 0, false
 		}
 		words := following[0].words
 		if strings.Trim(command[end:words[0].start], " \t\n") != "&&" {
-			return "", false
+			return "", 0, false
 		}
 		end = words[len(words)-1].end
 		target := words[len(words)-1].word.value
@@ -299,14 +299,18 @@ func compoundReplacement(command string, verdict worktreeAddVerdict, current com
 		if !filepath.IsAbs(target) && !strings.HasPrefix(target, "./") {
 			leaseGuard = compoundCDPATHGuard
 		}
-		changeDirectory = ` && cd -- "$` + name + `"`
 	}
 	inner := verdict.command
 	if verdict.directory != "" {
 		inner = "cd " + shellSingleQuote(verdict.directory) + " && " + inner
 	}
 	lease := name + "=$(" + leaseGuard + inner + `) && echo "` + name + `=$` + name + `"`
-	return command[:start] + lease + changeDirectory + command[end:], true
+	prefix := command[:start] + lease
+	if !verdict.path.expanded {
+		prefix += " && cd -- "
+		return prefix + `"$` + name + `"` + command[end:], len(prefix), true
+	}
+	return prefix + command[end:], 0, true
 }
 
 // literalWorktreeConsumer は固定パスを直後の cd だけが消費し、貸出に失敗すれば後続が走らないことを確認する。
