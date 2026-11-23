@@ -5,6 +5,8 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
+
+	"github.com/HappyOnigiri/WorktreeX/internal/gitx"
 )
 
 // policyBashInvocation は引数が固定の bash -c から、引き継いだ cwd で走る Git 呼び出しを読む。
@@ -112,16 +114,22 @@ func literalPolicyPath(word commandWord) bool {
 
 // policyBashEnvironmentKnown は起動ファイルや継承した設定がコマンドと実行先を変え得る場合を除く。
 func policyBashEnvironmentKnown() bool {
-	for _, name := range []string{"BASH_ENV", "ENV", "SHELLOPTS", "BASHOPTS", "CDPATH", "GIT_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE"} {
-		if os.Getenv(name) != "" {
+	for _, entry := range os.Environ() {
+		name, value, _ := strings.Cut(entry, "=")
+		if !policyBashEnvironmentEntryKnown(name, value) {
 			return false
 		}
 	}
-	for _, entry := range os.Environ() {
-		_, value, _ := strings.Cut(entry, "=")
-		if strings.HasPrefix(entry, "BASH_FUNC_") || strings.HasPrefix(value, "() {") {
-			return false
-		}
+	return true
+}
+
+func policyBashEnvironmentEntryKnown(name, value string) bool {
+	if gitx.StripsInheritedEnv(name) || strings.HasPrefix(name, "BASH_FUNC_") || strings.HasPrefix(value, "() {") {
+		return false
+	}
+	switch name {
+	case "BASH_ENV", "ENV", "SHELLOPTS", "BASHOPTS", "CDPATH":
+		return value == ""
 	}
 	return true
 }

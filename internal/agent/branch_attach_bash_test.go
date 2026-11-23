@@ -1,6 +1,7 @@
 package agent
 
 import (
+	"os"
 	"path/filepath"
 	"testing"
 )
@@ -31,6 +32,12 @@ func TestClassifyBranchAttachInLiteralBashCommand(t *testing.T) {
 		{command: "BASH_ENV=./startup " + inline(detach), cwd: fixture.detached, want: branchPolicyUnresolved},
 		{command: "export BASH_ENV=./startup; " + inline(detach), cwd: fixture.detached, want: branchPolicyUnresolved},
 		{command: inline(detach) + ` > "$LOG"`, cwd: fixture.detached, want: branchPolicyUnresolved},
+	})
+	t.Run("inherited Git config", func(t *testing.T) {
+		t.Setenv("GIT_CONFIG_GLOBAL", os.DevNull)
+		runBranchPolicyCases(t, []branchPolicyCase{
+			{command: inline(detach), cwd: fixture.detached, want: branchPolicyUnresolved},
+		})
 	})
 	t.Setenv("BASH_ENV", filepath.Join(fixture.tmp, "startup"))
 	runBranchPolicyCases(t, []branchPolicyCase{
