@@ -204,7 +204,7 @@ func preToolUseDecision(ctx context.Context, payload []byte, workspaceRoot strin
 	}
 	if output, ok := worktreeAddHookOutput(payload, workspaceRoot); ok || !managed {
 		if ok && managed && output.HookSpecificOutput.UpdatedInput != nil {
-			if checked, decided := branchAttachHookOutput(ctx, rewrittenPayload(payload, output.HookSpecificOutput.UpdatedInput)); decided {
+			if checked, decided := branchAttachHookOutput(ctx, rewrittenPayload(payload, output.HookSpecificOutput.UpdatedInput), workspaceRoot); decided {
 				return checked, true
 			}
 		}
@@ -213,7 +213,7 @@ func preToolUseDecision(ctx context.Context, payload []byte, workspaceRoot strin
 	if output, ok := subagentIsolationHookOutput(payload); ok {
 		return output, true
 	}
-	return branchAttachHookOutput(ctx, payload)
+	return branchAttachHookOutput(ctx, payload, workspaceRoot)
 }
 
 // rewrittenPayload は payload の tool_input を書き換え後の入力へ差し替える。組み立てに失敗すれば元の payload を返す。

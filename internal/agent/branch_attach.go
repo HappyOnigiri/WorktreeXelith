@@ -50,7 +50,7 @@ var unsafeGitEnvironmentPrefixes = []string{"GIT_WORK_TREE=", "GIT_DIR=", "GIT_I
 // branchAttachHookOutput は linked worktree への attach を拒否するか、コミットを調べる連結なら detached に書き換える。
 // main worktree と Git の管理下にないディレクトリでは何もしない。
 // 対象の git 呼び出しを含むのに実行先か引数を静的に決められない command は、見逃しを防ぐため deny に倒す。
-func branchAttachHookOutput(ctx context.Context, payload []byte) (preToolUseHookOutput, bool) {
+func branchAttachHookOutput(ctx context.Context, payload []byte, workspaceRoot string) (preToolUseHookOutput, bool) {
 	// 全ツール呼び出しで走るため、関係しない payload は JSON を解く前に落とす。
 	raw := string(payload)
 	if !strings.Contains(raw, "checkout") && !strings.Contains(raw, "switch") && !strings.Contains(raw, "symbolic-ref") {
@@ -76,7 +76,7 @@ func branchAttachHookOutput(ctx context.Context, payload []byte) (preToolUseHook
 	switch classifyBranchAttach(ctx, runner, command, cwd) {
 	case branchPolicyAttach:
 		if _, hasWorkdir := decoded.ToolInput["workdir"]; !hasWorkdir && filepath.IsAbs(decoded.CWD) {
-			if rewritten, ok := detachBranchInspection(ctx, runner, command, cwd); ok {
+			if rewritten, ok := detachBranchInspection(ctx, runner, command, cwd, workspaceRoot); ok {
 				return preToolUseHookOutput{
 					HookSpecificOutput: preToolUseHookSpecificOutput{
 						HookEventName:            "PreToolUse",

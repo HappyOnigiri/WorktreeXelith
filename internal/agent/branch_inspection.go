@@ -12,9 +12,9 @@ import (
 
 var fullGitObjectID = regexp.MustCompile(`^(?:[0-9a-fA-F]{40}|[0-9a-fA-F]{64})$`)
 
-// detachBranchInspection は attach と同じ実行先でコミットを読む && 連結だけを書き換える。
+// detachBranchInspection は貸出範囲内で attach と同じ実行先のコミットを読む && 連結だけを書き換える。
 // --detach と解決済みの OID を渡し、後続の原文と checkout 失敗時に止まる && を残す。
-func detachBranchInspection(ctx context.Context, runner *gitx.Runner, command, cwd string) (string, bool) {
+func detachBranchInspection(ctx context.Context, runner *gitx.Runner, command, cwd, workspaceRoot string) (string, bool) {
 	segments := branchInspectionSegments(command)
 	if len(segments) < 2 {
 		return "", false
@@ -33,6 +33,10 @@ func detachBranchInspection(ctx context.Context, runner *gitx.Runner, command, c
 	}
 	attach := branchInspectionGit(segments[0], base)
 	if attach.target == "" || len(attach.args) != 1 || (attach.subcommand != "checkout" && attach.subcommand != "switch") {
+		return "", false
+	}
+	root, err := filepath.EvalSymlinks(workspaceRoot)
+	if err != nil || !withinDirectory(root, attach.target) || !insideRepository(attach.target, root) {
 		return "", false
 	}
 	branch := attach.args[0].value

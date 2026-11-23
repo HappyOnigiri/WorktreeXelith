@@ -103,7 +103,7 @@
    wxの外のsessionは終了してもleaseを返さないため、案内には`wx new --json`のidを控えて`wx release`で返す手順を含める。
    `off` / `ask`ではwx newを使う前提が無いので素通しする。
    管理下のsessionでは、linked worktreeへブランチをattachする`checkout`・`switch`・`symbolic-ref`も原則として拒否し、slotをdetachedのまま保つ。
-   既存のローカルブランチを指定した`checkout`や`switch`の後が、同じ実行先でHEADのコミットだけを調べる`&&`連結なら、ブランチ先端のコミットへdetachedで切り替える。
+   このセッションに貸し出したworkspace内で、既存のローカルブランチを指定した`checkout`や`switch`の後に、同じ実行先でHEADのコミットだけを調べる`&&`連結が続く場合は、ブランチ先端へdetachedで切り替える。
    後続の調査はそのコミットを参照し、切り替えが失敗すれば`&&`で止まる。
    attachの判定はcdとサブシェルを追って各git呼び出しの実行先を決め、対象のgit呼び出しを含むのに実行先や引数を静的に決められない場合は見逃しを避けて拒否する。
    判定は1回のhookで1つだけ出し、`git worktree add`の書き換えを優先する。

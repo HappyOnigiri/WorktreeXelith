@@ -4,8 +4,10 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -100,7 +102,13 @@ func TestPreToolUseDetachesBranchForCommitInspection(t *testing.T) {
 func TestPreToolUseKeepsAttachDenialsOutsideCommitInspection(t *testing.T) {
 	fixture := newBranchPolicyFixture(t)
 	fixtureGit(t, fixture.main, "branch", "nested/topic")
+	if err := os.Symlink(fixture.attached, filepath.Join(fixture.detached, "other-worktree")); err != nil {
+		t.Fatal(err)
+	}
+	switchAndInspect := "git -C %[1]s %s && git -C %[1]s rev-parse HEAD"
 	for _, command := range []string{
+		fmt.Sprintf(switchAndInspect, shellSingleQuote(fixture.attached), "switch other"),
+		fmt.Sprintf(switchAndInspect, "other-worktree", "switch other"),
 		"git checkout -b new-branch",
 		"git checkout -b new-branch && git rev-parse HEAD",
 		"git -C \"$TARGET\" checkout other && git rev-parse HEAD",
