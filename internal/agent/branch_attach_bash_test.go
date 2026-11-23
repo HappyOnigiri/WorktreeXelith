@@ -3,10 +3,22 @@ package agent
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
 func TestClassifyBranchAttachInLiteralBashCommand(t *testing.T) {
+	// 分類関数はテストプロセスの環境を読むので、実行元の設定をケースから切り離す。
+	for _, entry := range os.Environ() {
+		name, value, _ := strings.Cut(entry, "=")
+		if policyBashEnvironmentEntryKnown(name, value) {
+			continue
+		}
+		t.Setenv(name, value)
+		if err := os.Unsetenv(name); err != nil {
+			t.Fatal(err)
+		}
+	}
 	fixture := newBranchPolicyFixture(t)
 	inline := func(script string) string { return "bash -c '" + script + "'" }
 	switchOther := "git " + "switch other"
