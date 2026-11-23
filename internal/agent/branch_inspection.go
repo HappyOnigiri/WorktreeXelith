@@ -86,6 +86,9 @@ func branchInspectionSegments(command string) [][]policyToken {
 		case token.operator == "&&" && start < index:
 			segments = append(segments, tokens[start:index])
 			start = index + 1
+		case token.operator == "\n" && len(segments) > 0 && start == index:
+			// && の後に次のコマンドが来るまでの改行は、コマンドを区切らない。
+			start = index + 1
 		default:
 			return nil
 		}

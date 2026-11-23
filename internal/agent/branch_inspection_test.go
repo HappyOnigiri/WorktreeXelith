@@ -173,3 +173,23 @@ func TestInspectsHeadCommitRequiresOutputWithoutDecorations(t *testing.T) {
 		}
 	}
 }
+
+func TestBranchInspectionPreservesNewlinesAfterAnd(t *testing.T) {
+	fixture := newBranchPolicyFixture(t)
+	prefix := "git " + "switch other"
+	suffix := " &&\n\n\tgit rev-parse --verify HEAD"
+	payload := recordedPayloadWithCommand(t, "codex-0.151.0-pre-tool-use-exec.json", prefix+suffix)
+	payload = strings.Replace(payload, `"cwd":"/tmp/wx-session/root"`, `"cwd":"`+fixture.detached+`"`, 1)
+	output, ok := preToolUseDecision(context.Background(), []byte(payload), fixture.detached, true)
+	specific := output.HookSpecificOutput
+	if !ok || specific.PermissionDecision != "allow" {
+		t.Fatalf("decision=%+v, want a rewrite", specific)
+	}
+	var rewritten string
+	if err := json.Unmarshal(specific.UpdatedInput["command"], &rewritten); err != nil || !strings.HasSuffix(rewritten, suffix) {
+		t.Fatalf("rewritten command did not preserve %q: %q, %v", suffix, rewritten, err)
+	}
+	if segments := branchInspectionSegments(prefix + "\ngit rev-parse --verify HEAD"); len(segments) != 0 {
+		t.Fatalf("an independent command was accepted: %+v", segments)
+	}
+}
