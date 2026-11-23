@@ -78,10 +78,6 @@ func rewriteCompoundWorktreeAdd(command string, location worktreeAddLocation) (s
 			}
 			continue
 		}
-		// cd で移った先で走る git worktree add は、-C が無ければその位置が repository の中でなければ失敗する。
-		if walk.moved && len(candidate.directories) == 0 && !insideRepository(walk.directory, walk.canonicalRoot) {
-			return "", false
-		}
 		switch current.before {
 		case "", ";", "&&", "\n":
 		default:
@@ -92,6 +88,9 @@ func rewriteCompoundWorktreeAdd(command string, location worktreeAddLocation) (s
 		}
 		verdict := rewriteWorktreeAddCandidate(candidate, worktreeAddLocation{cwd: walk.directory, root: location.root})
 		if verdict.decision != worktreeAddRewrite {
+			return "", false
+		}
+		if len(candidate.directories) == 0 && (walk.moved || !verdict.path.expanded) && !walk.inRepository() {
 			return "", false
 		}
 		return compoundReplacement(command, verdict, current, commands[index+1:], walk.directory)
@@ -199,6 +198,16 @@ type compoundWalk struct {
 	directory, root, canonicalRoot string
 	// moved は cd で cwd から移ったこと、conditional は最後の cd が `&&` の後にあり走らない場合があることを表す。
 	moved, conditional bool
+}
+
+// inRepository は作成コマンドの実行先が workspace 内のリポジトリにあるかを返す。
+func (w compoundWalk) inRepository() bool {
+	if w.moved {
+		return insideRepository(w.directory, w.canonicalRoot)
+	}
+	directory, dirErr := filepath.EvalSymlinks(w.directory)
+	root, rootErr := filepath.EvalSymlinks(w.root)
+	return dirErr == nil && rootErr == nil && withinDirectory(root, directory) && insideRepository(directory, root)
 }
 
 // admit はコマンドの前の繋ぎ方が、追っているディレクトリを不確かにしないかを返す。

@@ -138,6 +138,7 @@ func TestClassifyWorktreeAddCommandKeepsUnsafeCompoundsDenied(t *testing.T) {
 		{name: "or before the candidate", cwd: server, command: `false || git worktree add "$WT" HEAD && cd "$WT"`},
 		{name: "literal path without cd", cwd: server, command: `git worktree add x && ls`},
 		{name: "different literal path", cwd: server, command: `git worktree add x && cd y`},
+		{name: "literal path from a workspace root outside any repository", cwd: root, command: `git worktree add x && cd ./x`},
 		{name: "different bases with git -C", cwd: root, command: `git -C server worktree add x && cd x`},
 		{name: "literal path with semicolon", cwd: server, command: `git worktree add x; cd x`},
 		{name: "duplicate operator before cd", cwd: server, command: `git worktree add x && && cd x`},
