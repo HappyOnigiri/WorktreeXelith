@@ -13,6 +13,8 @@ type commandWord struct {
 	quoted   bool
 	expanded bool
 	globbed  bool
+	// leasedDirectory はフックが生成した cd の引数にだけ付ける。
+	leasedDirectory bool
 	// tilde は語が引用されていない ~ で始まり、shell がホームへ展開し得ることを表す。
 	tilde bool
 	// substitutions は語の中の二重引用符内の `$(...)` とバッククオートの本文で、語とは別のサブシェルとして判定する。
@@ -40,7 +42,7 @@ const (
 )
 
 // start と end は command 内の語のバイト範囲で、語の token にだけ入る。
-// operator は区切りの原文（`&&` `||` `;` 改行）と、引用されていない置換を開く括弧の `$(` である。
+// operator は区切り・リダイレクトの原文か、引用されていない置換を開く `$(` である。
 // どちらも git worktree add を連結の中で書き換えるときに、置き換える範囲と前後の繋ぎ方を知るために使う。
 // commentlint:allow-long -- 位置と区切りの原文を持つ理由を残す
 type policyToken struct {
@@ -225,11 +227,13 @@ func (l *policyLexer) operator(char byte) bool {
 	case char == ';':
 		l.emitSeparator(";")
 	case char == '&' && next == '>':
+		start := l.index
 		l.index++
 		if l.next() == '>' {
 			l.index++
 		}
 		l.emit(policyTokenRedirect)
+		l.tokens[len(l.tokens)-1].operator = l.command[start : l.index+1]
 	case next == char && (char == '&' || char == '|'):
 		l.index++
 		l.emitSeparator(string([]byte{char, char}))
@@ -262,13 +266,15 @@ func (l *policyLexer) redirect() {
 	}
 	start := l.index
 	l.index = consumeRedirect(l.command, l.index)
-	switch l.command[start : l.index+1] {
+	operator := l.command[start : l.index+1]
+	switch operator {
 	case "<<-":
 		l.heredocDelimiter, l.stripTabs = true, true
 	case "<<":
 		l.heredocDelimiter, l.stripTabs = true, false
 	}
 	l.emit(policyTokenRedirect)
+	l.tokens[len(l.tokens)-1].operator = operator
 }
 
 func (l *policyLexer) unquoted(char byte) {
@@ -381,6 +387,9 @@ func isDigits(value string) bool {
 	}
 	return true
 }
+
+// policyLeasedDirectory は解析時点では実パスがない貸出先を表す。
+const policyLeasedDirectory = "\x00"
 
 // policyGitInvocation は 1 つの git 呼び出しで、target が空なら実行先を静的に決められない。
 type policyGitInvocation struct {
@@ -561,7 +570,9 @@ func policySegment(parts []commandWord, base *string) (invocation policyGitInvoc
 		if valueIndex >= len(parts) || strings.HasPrefix(parts[valueIndex].value, "-") {
 			return policyGitInvocation{}, false, false
 		}
-		if *base != "" {
+		if parts[valueIndex].leasedDirectory {
+			*base = policyLeasedDirectory
+		} else if *base != "" {
 			*base = resolvePolicyDirectory(parts[valueIndex], *base)
 		}
 		return policyGitInvocation{}, false, true

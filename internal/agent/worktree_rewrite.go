@@ -31,8 +31,9 @@ type preToolUseHookSpecificOutput struct {
 }
 
 type preToolUseHookOutput struct {
-	HookSpecificOutput preToolUseHookSpecificOutput `json:"hookSpecificOutput"`
-	SystemMessage      string                       `json:"systemMessage,omitempty"`
+	HookSpecificOutput   preToolUseHookSpecificOutput `json:"hookSpecificOutput"`
+	SystemMessage        string                       `json:"systemMessage,omitempty"`
+	leaseDirectoryOffset int
 }
 
 const (
@@ -41,9 +42,9 @@ const (
 	rewriteReason        = "wx leases prepared worktrees, so git worktree add is replaced with wx new."
 )
 
-// compoundRewriteContext は連結の一部を書き換えたときの案内で、パスは変数で後続へ渡り、command 自身が表示する。
-const compoundRewriteContext = `wx replaced git worktree add inside the command with NAME=$(wx new ...), which leases a workspace that wx prepares, tracks and returns.
-- The variable that named the worktree path now holds the leased path for the rest of the command, and the command prints it as NAME=<path>. The path assigned before was never created.
+// compoundRewriteContext は連結を書き換えた後、貸出先をどこで確認できるかを伝える。
+const compoundRewriteContext = `wx replaced git worktree add inside the command with wx new, which leases a workspace that wx prepares, tracks and returns.
+- The command passes the leased path to the remaining commands and prints it as NAME=<path>.
 - Use the printed path in later tool calls.
 - The leased workspace is detached. Run "git branch <name> HEAD" inside it when the work needs a branch.
 - No need to run wx release: the lease is returned when this session ends.
@@ -94,13 +95,15 @@ const (
 // worktreeAddVerdict の path と directory は書き換えのときだけ入る。
 // path は捨てるパス引数の語、directory は git -C から解決した wx new の実行先で、連結の書き換えが使う。
 type worktreeAddVerdict struct {
-	decision  worktreeAddDecision
-	command   string
-	reason    string
-	path      shellWord
-	directory string
+	decision   worktreeAddDecision
+	command    string
+	reason     string
+	path       shellWord
+	startPoint string
+	directory  string
 	// compound は連結の一部だけを書き換えたことを表し、agent への案内を変える。
-	compound bool
+	compound             bool
+	leaseDirectoryOffset int
 }
 
 func ignoreWorktreeAdd() worktreeAddVerdict {
@@ -116,7 +119,7 @@ func denyWorktreeAdd(reason string) worktreeAddVerdict {
 // hook は迂回できる UX であって強制境界ではないため、誤った deny の代償のほうが素通しより大きい。
 // 第 2 戻り値が false のときは何も出力せず、従来どおり readiness 待ちだけで抜ける。
 // commentlint:allow-long -- fail-open と fail-closed を切り替える根拠を残す
-func worktreeAddHookOutput(payload []byte, workspaceRoot string) (preToolUseHookOutput, bool) {
+func worktreeAddHookOutput(ctx context.Context, payload []byte, workspaceRoot string) (preToolUseHookOutput, bool) {
 	// 全ツール呼び出しで走るため、関係しない payload は JSON を解く前に落とす。
 	if !strings.Contains(string(payload), "worktree") {
 		return preToolUseHookOutput{}, false
@@ -136,7 +139,7 @@ func worktreeAddHookOutput(payload []byte, workspaceRoot string) (preToolUseHook
 	if !commandRunsInWorkspace(decoded.CWD, workspaceRoot) {
 		return preToolUseHookOutput{}, false
 	}
-	verdict := classifyWorktreeAddCommand(command, worktreeAddLocation{cwd: decoded.CWD, root: workspaceRoot})
+	verdict := classifyWorktreeAddCommand(ctx, command, worktreeAddLocation{cwd: decoded.CWD, root: workspaceRoot})
 	switch verdict.decision {
 	case worktreeAddRewrite:
 		updated := make(map[string]json.RawMessage, len(decoded.ToolInput))
@@ -158,7 +161,8 @@ func worktreeAddHookOutput(payload []byte, workspaceRoot string) (preToolUseHook
 				AdditionalContext:        guidance,
 				UpdatedInput:             updated,
 			},
-			SystemMessage: rewriteSystemMessage,
+			SystemMessage:        rewriteSystemMessage,
+			leaseDirectoryOffset: verdict.leaseDirectoryOffset,
 		}, true
 	case worktreeAddDeny:
 		return denyPreToolUse(verdict.reason+" "+denyGuidance[verdict.reason], denySystemMessage), true
@@ -201,9 +205,10 @@ func preToolUseDecision(ctx context.Context, payload []byte, workspaceRoot strin
 	if len(payload) == 0 {
 		return preToolUseHookOutput{}, false
 	}
-	if output, ok := worktreeAddHookOutput(payload, workspaceRoot); ok || !managed {
+	if output, ok := worktreeAddHookOutput(ctx, payload, workspaceRoot); ok || !managed {
 		if ok && managed && output.HookSpecificOutput.UpdatedInput != nil {
-			if denied, deny := branchAttachHookOutput(ctx, rewrittenPayload(payload, output.HookSpecificOutput.UpdatedInput)); deny {
+			rewritten := rewrittenPayload(payload, output.HookSpecificOutput.UpdatedInput)
+			if denied, deny := branchAttachHookOutput(ctx, rewritten, output.leaseDirectoryOffset); deny {
 				return denied, true
 			}
 		}
@@ -212,7 +217,7 @@ func preToolUseDecision(ctx context.Context, payload []byte, workspaceRoot strin
 	if output, ok := subagentIsolationHookOutput(payload); ok {
 		return output, true
 	}
-	return branchAttachHookOutput(ctx, payload)
+	return branchAttachHookOutput(ctx, payload, 0)
 }
 
 // rewrittenPayload は payload の tool_input を書き換え後の入力へ差し替える。組み立てに失敗すれば元の payload を返す。
@@ -251,7 +256,7 @@ func commandRunsInWorkspace(cwd, workspaceRoot string) bool {
 
 // classifyWorktreeAddCommand は Bash の command 文字列を静的に読み、3 通りの判定を返す。
 // 判定はコマンド文字列だけで行い、git -C があるときだけ location を使ってファイルシステムを見る。
-func classifyWorktreeAddCommand(command string, location worktreeAddLocation) worktreeAddVerdict {
+func classifyWorktreeAddCommand(ctx context.Context, command string, location worktreeAddLocation) worktreeAddVerdict {
 	segments, wellFormed := lexShellCommand(command)
 	candidates := 0
 	var chosen worktreeAddCandidate
@@ -274,8 +279,8 @@ func classifyWorktreeAddCommand(command string, location worktreeAddLocation) wo
 	case !wellFormed:
 		return denyWorktreeAdd(denyReasonUnsupported)
 	case candidates > 1 || len(segments) > 1:
-		if command, ok := rewriteCompoundWorktreeAdd(command, location); ok {
-			return worktreeAddVerdict{decision: worktreeAddRewrite, command: command, compound: true}
+		if command, offset, ok := rewriteCompoundWorktreeAdd(ctx, command, location); ok {
+			return worktreeAddVerdict{decision: worktreeAddRewrite, command: command, compound: true, leaseDirectoryOffset: offset}
 		}
 		return denyWorktreeAdd(denyReasonCompound)
 	}
@@ -363,7 +368,7 @@ func rewriteWorktreeAddArguments(arguments []shellWord) worktreeAddVerdict {
 	if !ok {
 		return denyWorktreeAdd(denyReasonStartPoint)
 	}
-	return worktreeAddVerdict{decision: worktreeAddRewrite, command: command, path: positional[0]}
+	return worktreeAddVerdict{decision: worktreeAddRewrite, command: command, path: positional[0], startPoint: startPoint}
 }
 
 // wxNewCommand は git worktree add の起点を wx new の呼び出しへ写す。

@@ -1,17 +1,28 @@
 package agent
 
 import (
+	"context"
+	"errors"
+	"os"
 	"path/filepath"
 	"regexp"
+	"strings"
+
+	"github.com/HappyOnigiri/WorktreeX/internal/gitx"
 )
 
 // compoundCommand は連結を区切りで分けた 1 つの単純コマンドである。
 // before と after は前後の繋ぎ方で、先頭と末尾は空、それ以外は区切りの原文か `|`・`&` である。
-// plain は語だけから成り、リダイレクト・サブシェル・パイプを含まないことを表す。
+// opaque は入れ子や heredoc があり、語だけでは内容を追えないことを表す。
 type compoundCommand struct {
 	words         []policyToken
 	before, after string
-	plain         bool
+	opaque        bool
+	redirect      bool
+}
+
+func (c compoundCommand) plain() bool {
+	return !c.opaque && !c.redirect
 }
 
 // shellReservedWords は制御構文を始める語で、続く git worktree add が条件付きで走ることを表す。
@@ -37,49 +48,89 @@ var compoundReservedVariables = map[string]bool{
 	"PATH": true, "HOME": true, "PWD": true, "OLDPWD": true, "IFS": true, "CDPATH": true, "SHELL": true, "TMPDIR": true,
 }
 
-// rewriteCompoundWorktreeAdd は連結の中の git worktree add 1 つを `NAME=$(wx new ...)` に置き換えた command を返す。
-// 書き換えるのは、パス引数が変数 1 つで、その変数を後続へ渡せば元の意図どおりに動く形に限る。
-// 置き換えた部分は wx new の終了コードを返し、直後が `&&` か末尾なので、貸出に失敗すれば後続は走らない。
-// `;` や `||` で続く形を除くのは、失敗時に空の変数で後続が今の workspace を相手に走るためである。
+const (
+	compoundLiteralPathVariable = "wx_worktree_path"
+	compoundCDPATHGuard         = `case "${CDPATH-}" in (*[!:]*) printf '%s\n' 'wx: CDPATH may change the cd destination; retry with an absolute or ./-prefixed cd path.' >&2; exit 1;; esac; `
+)
+
+// rewriteCompoundWorktreeAdd は連結の中の git worktree add 1 つを wx new へ写す。
 // 前にある cd は追い、workspace 内に解決できる場合だけ受け付ける。
-// commentlint:allow-long -- 受け付ける形と、それ以外を拒否する理由を残す
-func rewriteCompoundWorktreeAdd(command string, location worktreeAddLocation) (string, bool) {
+// 第 2 戻り値は生成した cd の引数の位置で、生成しなかった場合は 0 を返す。
+func rewriteCompoundWorktreeAdd(ctx context.Context, command string, location worktreeAddLocation) (string, int, bool) {
 	tokens, ok := lexPolicyCommand(command)
 	if !ok {
-		return "", false
+		return "", 0, false
 	}
 	if candidates, unsafe := scanCompoundTokens(tokens); candidates != 1 || unsafe {
-		return "", false
+		return "", 0, false
 	}
 	commands, ok := splitCompoundCommands(tokens)
 	if !ok {
-		return "", false
+		return "", 0, false
 	}
 	walk := compoundWalk{directory: location.cwd, root: location.root}
-	for _, current := range commands {
+	for index, current := range commands {
 		if !walk.admit(current) {
-			return "", false
+			return "", 0, false
 		}
 		words := policyShellWords(current.words)
 		candidate, isCandidate := gitWorktreeAddArguments(words)
 		if !isCandidate {
 			if !walk.follow(words, current) {
-				return "", false
+				return "", 0, false
 			}
 			continue
 		}
-		// cd で移った先で走る git worktree add は、-C が無ければその位置が repository の中でなければ失敗する。
-		if walk.moved && len(candidate.directories) == 0 && !insideRepository(walk.directory, walk.canonicalRoot) {
-			return "", false
+		switch current.before {
+		case "", ";", "&&", "\n":
+		default:
+			return "", 0, false
 		}
-		replacement, ok := compoundReplacement(candidate, current, worktreeAddLocation{cwd: walk.directory, root: location.root})
-		if !ok {
-			return "", false
+		if !current.plain() || (current.after != "" && current.after != "&&") {
+			return "", 0, false
 		}
-		start, end := current.words[0].start, current.words[len(current.words)-1].end
-		return command[:start] + replacement + command[end:], true
+		verdict := rewriteWorktreeAddCandidate(candidate, worktreeAddLocation{cwd: walk.directory, root: location.root})
+		if verdict.decision != worktreeAddRewrite {
+			return "", 0, false
+		}
+		if len(candidate.directories) == 0 && (walk.moved || !verdict.path.expanded) && !walk.inRepository() {
+			return "", 0, false
+		}
+		if !verdict.path.expanded && verdict.startPoint == "HEAD" {
+			// 先行コマンドがあると、実行時の HEAD が解析時と同じか分からない。
+			if index != 0 {
+				return "", 0, false
+			}
+			directory := verdict.directory
+			if directory == "" {
+				directory = walk.directory
+			}
+			oid := literalWorktreeHead(ctx, directory)
+			if oid == "" {
+				return "", 0, false
+			}
+			verdict.command = "wx new --commit " + oid
+		}
+		return compoundReplacement(command, verdict, current, commands[index+1:], walk.directory)
 	}
-	return "", false
+	return "", 0, false
+}
+
+// literalWorktreeHead は明示された HEAD を、元のリポジトリのコミットに固定する。
+func literalWorktreeHead(ctx context.Context, directory string) string {
+	if directory == "" {
+		return ""
+	}
+	runner := &gitx.Runner{Timeout: branchPolicyGitTimeout}
+	result, err := runner.Run(ctx, directory, "rev-parse", "--verify", "HEAD^{commit}")
+	if err != nil {
+		return ""
+	}
+	oid := strings.TrimSpace(result.Stdout)
+	if len(oid) != 40 || !gitx.IsHexObjectName(oid) {
+		return ""
+	}
+	return oid
 }
 
 // scanCompoundTokens は置換の本文まで含めて git worktree add の数を数え、実行内容を静的に追えなくするコマンドの有無を返す。
@@ -124,19 +175,23 @@ func scanCompoundTokens(tokens []policyToken) (candidates int, unsafe bool) {
 }
 
 // splitCompoundCommands は token 列を単純コマンドへ分ける。候補より後ろの構文は問わないが、
-// 括弧が現れた後は候補が入れ子の中にあり得るので、以降のコマンドを plain にしない。
-// 引用されていない `$(...)` の中身は外側のコマンドに数えず、それを含むコマンドを plain にしない。
+// 括弧が現れた後は候補が入れ子の中にあり得るので、以降のコマンドを opaque にする。
+// 引用されていない `$(...)` の中身は外側のコマンドに数えず、それを含むコマンドを opaque にする。
 func splitCompoundCommands(tokens []policyToken) ([]compoundCommand, bool) {
 	var commands []compoundCommand
-	current := compoundCommand{plain: true}
+	var current compoundCommand
 	nested := false
 	substitution := 0
 	closeCommand := func(after string) {
+		// && の直後の改行は同じ連結を続ける。
+		if after == "\n" && current.before == "&&" && len(current.words) == 0 && current.plain() {
+			return
+		}
 		current.after = after
 		if len(current.words) > 0 {
 			commands = append(commands, current)
 		}
-		current = compoundCommand{before: after, plain: !nested}
+		current = compoundCommand{before: after, opaque: nested}
 	}
 	for _, token := range tokens {
 		if substitution > 0 {
@@ -149,7 +204,7 @@ func splitCompoundCommands(tokens []policyToken) ([]compoundCommand, bool) {
 		}
 		if token.kind == policyTokenOpen && token.operator == "$(" {
 			substitution++
-			current.plain = false
+			current.opaque = true
 			continue
 		}
 		switch token.kind {
@@ -163,9 +218,10 @@ func splitCompoundCommands(tokens []policyToken) ([]compoundCommand, bool) {
 			closeCommand("&")
 		case policyTokenOpen, policyTokenClose:
 			nested = true
-			current.plain = false
+			current.opaque = true
 		case policyTokenRedirect:
-			current.plain = false
+			current.redirect = true
+			current.opaque = current.opaque || strings.HasPrefix(token.operator, "<<")
 		}
 	}
 	closeCommand("")
@@ -177,6 +233,16 @@ type compoundWalk struct {
 	directory, root, canonicalRoot string
 	// moved は cd で cwd から移ったこと、conditional は最後の cd が `&&` の後にあり走らない場合があることを表す。
 	moved, conditional bool
+}
+
+// inRepository は作成コマンドの実行先が workspace 内のリポジトリにあるかを返す。
+func (w compoundWalk) inRepository() bool {
+	if w.moved {
+		return insideRepository(w.directory, w.canonicalRoot)
+	}
+	directory, dirErr := filepath.EvalSymlinks(w.directory)
+	root, rootErr := filepath.EvalSymlinks(w.root)
+	return dirErr == nil && rootErr == nil && withinDirectory(root, directory) && insideRepository(directory, root)
 }
 
 // admit はコマンドの前の繋ぎ方が、追っているディレクトリを不確かにしないかを返す。
@@ -207,11 +273,20 @@ func (w *compoundWalk) follow(words []shellWord, current compoundCommand) bool {
 	if shellReservedWords[words[index].value] {
 		return false
 	}
-	if filepath.Base(words[index].value) != "cd" {
+	if words[index].value == "command" {
+		index++
+		for index < len(words) && words[index].value == "-p" {
+			index++
+		}
+		if index < len(words) && words[index].value == "--" {
+			index++
+		}
+	}
+	if index == len(words) || filepath.Base(words[index].value) != "cd" {
 		return true
 	}
 	// パイプの中の cd は別プロセスで走り、`||` の後の cd は走るとは限らない。
-	if !current.plain || len(words) != index+2 || current.after == "|" || current.after == "&" || current.before == "||" || current.before == "|" {
+	if !current.plain() || len(words) != index+2 || current.after == "|" || current.after == "&" || current.before == "||" || current.before == "|" {
 		return false
 	}
 	target := words[index+1]
@@ -230,34 +305,158 @@ func (w *compoundWalk) follow(words []shellWord, current compoundCommand) bool {
 	return true
 }
 
-// compoundReplacement は候補 1 つを `NAME=$(wx new ...) && echo "NAME=$NAME"` へ写す。
-// 置換の中の stdout は貸出のパスだけなので、echo しないと agent は後のツール呼び出しで使うパスを知り得ない。
-func compoundReplacement(candidate worktreeAddCandidate, current compoundCommand, location worktreeAddLocation) (string, bool) {
-	switch current.before {
-	case "", ";", "&&", "\n":
-	default:
-		return "", false
-	}
-	if !current.plain || (current.after != "" && current.after != "&&") {
-		return "", false
-	}
-	verdict := rewriteWorktreeAddCandidate(candidate, location)
-	if verdict.decision != worktreeAddRewrite {
-		return "", false
-	}
-	match := compoundPathVariable.FindStringSubmatch(verdict.path.value)
-	if match == nil || !verdict.path.expanded {
-		return "", false
-	}
-	name := match[1] + match[2]
-	if compoundReservedVariables[name] {
-		return "", false
+// compoundReplacement は貸出先を表示し、固定パスの場合は続く cd の行き先にも渡す。
+func compoundReplacement(command string, verdict worktreeAddVerdict, current compoundCommand, following []compoundCommand, cwd string) (string, int, bool) {
+	start := current.words[0].start
+	end := current.words[len(current.words)-1].end
+	var name, leaseGuard string
+	if verdict.path.expanded {
+		match := compoundPathVariable.FindStringSubmatch(verdict.path.value)
+		if match == nil {
+			return "", 0, false
+		}
+		name = match[1] + match[2]
+		if compoundReservedVariables[name] {
+			return "", 0, false
+		}
+	} else {
+		name = compoundLiteralPathVariable
+		if current.after != "&&" || strings.Contains(command, name) || !literalWorktreeConsumer(verdict, following, cwd) {
+			return "", 0, false
+		}
+		words := following[0].words
+		if strings.Trim(command[end:words[0].start], " \t\n") != "&&" {
+			return "", 0, false
+		}
+		end = words[len(words)-1].end
+		target := words[len(words)-1].word.value
+		// cd が CDPATH を参照する形では、貸出前に実行時の値を確かめる。
+		if !filepath.IsAbs(target) && !strings.HasPrefix(target, "./") {
+			leaseGuard = compoundCDPATHGuard
+		}
 	}
 	inner := verdict.command
 	if verdict.directory != "" {
 		inner = "cd " + shellSingleQuote(verdict.directory) + " && " + inner
 	}
-	return name + "=$(" + inner + `) && echo "` + name + `=$` + name + `"`, true
+	lease := name + "=$(" + leaseGuard + inner + `) && echo "` + name + `=$` + name + `"`
+	prefix := command[:start] + lease
+	if !verdict.path.expanded {
+		prefix += " && cd -- "
+		return prefix + `"$` + name + `"` + command[end:], len(prefix), true
+	}
+	return prefix + command[end:], 0, true
+}
+
+// literalWorktreeConsumer は固定パスを直後の cd だけが消費し、貸出に失敗すれば後続が走らないことを確認する。
+func literalWorktreeConsumer(verdict worktreeAddVerdict, following []compoundCommand, cwd string) bool {
+	if len(following) == 0 {
+		return false
+	}
+	cd := following[0]
+	if cd.before != "&&" || !cd.plain() || (cd.after != "" && cd.after != "&&") || cd.words[0].word.value != "cd" {
+		return false
+	}
+	args := cd.words[1:]
+	if len(args) == 2 && args[0].word.value == "--" {
+		args = args[1:]
+	}
+	if len(args) != 1 || strings.HasPrefix(args[0].word.value, "-") {
+		return false
+	}
+	gitCWD := cwd
+	if verdict.directory != "" {
+		gitCWD = verdict.directory
+	}
+	target := literalWorktreePath(verdict.path, gitCWD)
+	if target == "" || target != literalWorktreePath(policyShellWord(args[0].word), cwd) {
+		return false
+	}
+	return literalWorktreeSuffix(following[1:], target)
+}
+
+// literalWorktreePath は存在しない作成先も比べるため、親の symlink によって意味が変わる .. を除いて比較する。
+func literalWorktreePath(word shellWord, cwd string) string {
+	if word.value == "" || word.expanded || word.globbed || word.tilde {
+		return ""
+	}
+	for _, component := range strings.Split(word.value, "/") {
+		if component == ".." {
+			return ""
+		}
+	}
+	path := filepath.Clean(word.value)
+	if path == "." || path == "/" {
+		return ""
+	}
+	if !filepath.IsAbs(path) {
+		if cwd == "" {
+			return path
+		}
+		path = filepath.Join(cwd, path)
+	}
+	parent := resolveLiteralWorktreePath(filepath.Dir(path))
+	if parent == "" {
+		return ""
+	}
+	return filepath.Join(parent, filepath.Base(path))
+}
+
+// resolveLiteralWorktreePath は実在する祖先の実パスに、未作成の末尾を付け直す。
+func resolveLiteralWorktreePath(path string) string {
+	resolved, err := filepath.EvalSymlinks(path)
+	if err == nil {
+		return resolved
+	}
+	if !errors.Is(err, os.ErrNotExist) || path == filepath.Dir(path) {
+		return ""
+	}
+	// リンク切れのパスを未作成のディレクトリと同じように扱わない。
+	if _, err := os.Lstat(path); !errors.Is(err, os.ErrNotExist) {
+		return ""
+	}
+	parent := resolveLiteralWorktreePath(filepath.Dir(path))
+	if parent == "" {
+		return ""
+	}
+	return filepath.Join(parent, filepath.Base(path))
+}
+
+// literalWorktreeSuffix は貸出先からの相対操作を残す。元の作成先を参照し得る語や展開があれば拒否する。
+// パイプは連結全体が cd の成功を待つが、改行やセミコロンは失敗時も次のコマンドを走らせる。
+func literalWorktreeSuffix(commands []compoundCommand, target string) bool {
+	basename := filepath.Base(target)
+	originalPath, err := regexp.Compile(`(?i)(^|[^[:alnum:]_.-])(?:` + regexp.QuoteMeta(basename) + `|\.\.)([^[:alnum:]_.-]|$)`)
+	if err != nil {
+		return false
+	}
+	for _, command := range commands {
+		if command.opaque || shellReservedWords[command.words[0].word.value] {
+			return false
+		}
+		switch command.after {
+		case "", "&&", "|":
+		default:
+			return false
+		}
+		for _, token := range command.words {
+			word := token.word
+			if !word.static() || word.tilde || originalPath.MatchString(word.value) {
+				return false
+			}
+			path := word.value
+			if !filepath.IsAbs(path) {
+				_, path, _ = strings.Cut(path, "=")
+			}
+			if filepath.IsAbs(path) {
+				resolved := resolveLiteralWorktreePath(path)
+				if resolved == "" || withinDirectory(strings.ToLower(target), strings.ToLower(resolved)) {
+					return false
+				}
+			}
+		}
+	}
+	return true
 }
 
 func policyShellWords(tokens []policyToken) []shellWord {

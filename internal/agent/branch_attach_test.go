@@ -74,7 +74,7 @@ func fixtureGit(t *testing.T, dir string, args ...string) {
 }
 
 func classifyInFixture(command, cwd string) branchPolicyVerdict {
-	return classifyBranchAttach(context.Background(), &gitx.Runner{Timeout: branchPolicyGitTimeout}, command, cwd)
+	return classifyBranchAttach(context.Background(), &gitx.Runner{Timeout: branchPolicyGitTimeout}, command, cwd, 0)
 }
 
 type branchPolicyCase struct {
@@ -164,7 +164,7 @@ func TestClassifyBranchAttachFailsClosedWhenGitFails(t *testing.T) {
 	cancel()
 	runner := &gitx.Runner{Timeout: branchPolicyGitTimeout}
 	for _, command := range []string{"git switch other", "git checkout other"} {
-		if got := classifyBranchAttach(canceled, runner, command, fixture.detached); got != branchPolicyUnresolved {
+		if got := classifyBranchAttach(canceled, runner, command, fixture.detached, 0); got != branchPolicyUnresolved {
 			t.Fatalf("classify(%q) with a canceled context=%d, want unresolved", command, got)
 		}
 	}
@@ -335,7 +335,7 @@ func TestBranchAttachHookOutputExplainsTheDecision(t *testing.T) {
 		t.Helper()
 		payload := recordedPayloadWithCommand(t, fixtureName, command)
 		payload = strings.Replace(payload, `"cwd":"/tmp/wx-session/root"`, `"cwd":"`+cwd+`"`, 1)
-		output, ok := branchAttachHookOutput(context.Background(), []byte(payload))
+		output, ok := branchAttachHookOutput(context.Background(), []byte(payload), 0)
 		if !ok {
 			t.Fatalf("%q in %s was not denied", command, cwd)
 		}
@@ -359,7 +359,7 @@ func TestBranchAttachHookOutputExplainsTheDecision(t *testing.T) {
 	}
 	// cwd を載せない payload は hook プロセスの作業ディレクトリで判定する。
 	t.Chdir(fixture.detached)
-	if _, ok := branchAttachHookOutput(context.Background(), []byte(`{"tool_input":{"command":"git switch other"}}`)); !ok {
+	if _, ok := branchAttachHookOutput(context.Background(), []byte(`{"tool_input":{"command":"git switch other"}}`), 0); !ok {
 		t.Fatal("a payload without cwd was not judged in the working directory")
 	}
 	for _, payload := range []string{
@@ -368,7 +368,7 @@ func TestBranchAttachHookOutputExplainsTheDecision(t *testing.T) {
 		`{"tool_input":{"file_path":"switch.go"}}`,
 		`{"tool_input":`,
 	} {
-		if output, ok := branchAttachHookOutput(context.Background(), []byte(payload)); ok {
+		if output, ok := branchAttachHookOutput(context.Background(), []byte(payload), 0); ok {
 			t.Fatalf("payload %s was decided: %+v", payload, output)
 		}
 	}
