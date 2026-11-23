@@ -405,11 +405,16 @@ func policyGitInvocations(tokens []policyToken, cwd string) (invocations []polic
 	if base == "" {
 		return nil, false
 	}
-	return policyGitInvocationsFrom(tokens, base)
+	// Bash の cd は有効な論理 PWD を引き継ぐ。実パスと異なる起点からは追わない。
+	pwd := os.Getenv("PWD")
+	known := pwd == "" || pwd == base || resolvePolicyDirectory(commandWord{value: pwd}, "/") != base
+	return policyGitInvocationsFrom(tokens, base, known)
 }
 
 // policyGitInvocationsFrom は解決済みの base から tokens を追う。base が空なら実行先を決められない呼び出しとして返す。
-func policyGitInvocationsFrom(tokens []policyToken, base string) (invocations []policyGitInvocation, resolved bool) {
+func policyGitInvocationsFrom(tokens []policyToken, base string, bashContextKnown bool) (invocations []policyGitInvocation, resolved bool) {
+	// || の後では、直前の cd が実行されなかった場合にも後続へ進み得る。
+	bashContextKnown = bashContextKnown && !slices.ContainsFunc(tokens, func(token policyToken) bool { return token.operator == "||" })
 	var stack []policyFrame
 	var segment []commandWord
 	redirectTarget := false
@@ -419,24 +424,34 @@ func policyGitInvocationsFrom(tokens []policyToken, base string) (invocations []
 	// `&` の左の command は別プロセスで走るので、その cd を後続へ引き継がない。
 	// パイプラインの要素は shell によって別プロセスかどうかが違うので、cd があれば以降の実行先を決められないものとする。
 	// commentlint:allow-long -- 区切りの種類で cd の引き継ぎを変える理由を残す
-	process := func(next policyTokenKind) bool {
+	process := func(next policyToken) bool {
 		parts := segment
 		segment = nil
 		if redirectTarget {
 			return false
 		}
 		previous := base
+		if bashContextKnown && len(parts) > 0 {
+			if inner, ok := policyBashInvocation(parts, base); ok {
+				invocations = append(invocations, inner)
+				bashContextKnown = false
+				piped = next.kind == policyTokenPipe
+				return true
+			}
+			// 子 Bash に渡す cwd は、ここまでの cd が成功した場合だけ引き継げる。
+			bashContextKnown = next.operator == "&&" && literalPolicyCDTarget(parts, base) != ""
+		}
 		invocation, isGit, ok := policySegment(parts, &base)
 		if ok && isGit {
 			invocations = append(invocations, invocation)
 		}
 		switch {
-		case next == policyTokenBackground:
+		case next.kind == policyTokenBackground:
 			base = previous
-		case (next == policyTokenPipe || piped) && base != previous:
+		case (next.kind == policyTokenPipe || piped) && base != previous:
 			base = ""
 		}
-		piped = next == policyTokenPipe
+		piped = next.kind == policyTokenPipe
 		return ok
 	}
 	all := append(append([]policyToken(nil), tokens...), policyToken{kind: policyTokenSeparator})
@@ -445,7 +460,7 @@ func policyGitInvocationsFrom(tokens []policyToken, base string) (invocations []
 		case policyTokenWord:
 			// 置換の本文はその時点の実行先で走るサブシェルで、中の cd は外へ持ち出さない。
 			for _, inner := range token.word.substitutions {
-				nested, ok := policyGitInvocationsFrom(inner, base)
+				nested, ok := policyGitInvocationsFrom(inner, base, false)
 				if !ok {
 					return nil, false
 				}
@@ -460,12 +475,14 @@ func policyGitInvocationsFrom(tokens []policyToken, base string) (invocations []
 			}
 			segment = append(segment, token.word)
 		case policyTokenRedirect:
+			bashContextKnown = false
 			// `> >(...)` の 2 つ目の `>` はプロセス置換の一部で、1 つ目のリダイレクト先になる。
 			if redirectTarget && all[index+1].kind != policyTokenOpen {
 				return nil, false
 			}
 			redirectTarget = true
 		case policyTokenOpen:
+			bashContextKnown = false
 			if redirectTarget {
 				// `<(...)` と `>(...)` はプロセス置換で、本文をサブシェルとして読んだ後に外の command の続きへ戻る。
 				// commentlint:allow-long -- 外の command を保存したまま本文を読む理由を残す
@@ -474,19 +491,19 @@ func policyGitInvocationsFrom(tokens []policyToken, base string) (invocations []
 				segment, piped = nil, false
 				continue
 			}
-			if !process(token.kind) {
+			if !process(token) {
 				return nil, false
 			}
 			stack = append(stack, policyFrame{base: base})
 		case policyTokenClose:
-			if !process(token.kind) || len(stack) == 0 {
+			if !process(token) || len(stack) == 0 {
 				return nil, false
 			}
 			frame := stack[len(stack)-1]
 			stack = stack[:len(stack)-1]
 			base, segment, piped = frame.base, frame.segment, frame.piped
 		case policyTokenSeparator, policyTokenPipe, policyTokenBackground:
-			if !process(token.kind) {
+			if !process(token) {
 				return nil, false
 			}
 		}

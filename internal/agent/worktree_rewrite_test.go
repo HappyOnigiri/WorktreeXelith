@@ -9,6 +9,7 @@ import (
 )
 
 func TestClassifyWorktreeAddCommand(t *testing.T) {
+	const literalBash = "bash -c '"
 	tests := []struct {
 		name     string
 		command  string
@@ -16,6 +17,7 @@ func TestClassifyWorktreeAddCommand(t *testing.T) {
 		rewrite  string
 		reason   string
 	}{
+		{name: "literal Bash script", command: literalBash + "git worktree " + "add x'", decision: worktreeAddDeny, reason: denyReasonCompound},
 		{name: "detached HEAD", command: "git worktree add --detach /tmp/x HEAD", decision: worktreeAddRewrite, rewrite: "wx new"},
 		{name: "no start point", command: "git worktree add ../wt", decision: worktreeAddRewrite, rewrite: "wx new"},
 		{name: "branch start point", command: "git worktree add x feature", decision: worktreeAddRewrite, rewrite: "wx new --branch feature"},
