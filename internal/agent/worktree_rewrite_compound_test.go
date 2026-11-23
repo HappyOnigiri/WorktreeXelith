@@ -315,6 +315,10 @@ func TestPreToolUseDecisionChecksBranchAttachAfterCompoundRewrite(t *testing.T) 
 		if output := decide(t, attach, false); output.HookSpecificOutput.PermissionDecision != "allow" {
 			t.Fatalf("direct attach after rewrite=%+v, want allow", output.HookSpecificOutput)
 		}
+		inspect := `git worktree ` + `add --detach ` + path + ` origin/main && cd ` + path + ` && git ` + `switch topic && git rev-parse HEAD`
+		if output := decide(t, inspect, true); output.HookSpecificOutput.PermissionDecision != "deny" || output.HookSpecificOutput.UpdatedInput != nil {
+			t.Fatalf("managed inspection after rewrite=%+v, want deny", output.HookSpecificOutput)
+		}
 	}
 	restore := "checkout -- tracked.txt"
 	for _, tc := range []struct{ path, decision string }{{"x", "allow"}, {`"$WT"`, "deny"}} {

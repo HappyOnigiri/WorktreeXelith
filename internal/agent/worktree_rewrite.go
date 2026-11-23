@@ -31,9 +31,10 @@ type preToolUseHookSpecificOutput struct {
 }
 
 type preToolUseHookOutput struct {
-	HookSpecificOutput   preToolUseHookSpecificOutput `json:"hookSpecificOutput"`
-	SystemMessage        string                       `json:"systemMessage,omitempty"`
-	leaseDirectoryOffset int
+	HookSpecificOutput         preToolUseHookSpecificOutput `json:"hookSpecificOutput"`
+	SystemMessage              string                       `json:"systemMessage,omitempty"`
+	denyAttachOnReadinessError bool
+	leaseDirectoryOffset       int
 }
 
 const (
@@ -142,13 +143,6 @@ func worktreeAddHookOutput(ctx context.Context, payload []byte, workspaceRoot st
 	verdict := classifyWorktreeAddCommand(ctx, command, worktreeAddLocation{cwd: decoded.CWD, root: workspaceRoot})
 	switch verdict.decision {
 	case worktreeAddRewrite:
-		updated := make(map[string]json.RawMessage, len(decoded.ToolInput))
-		maps.Copy(updated, decoded.ToolInput)
-		encoded, err := json.Marshal(verdict.command)
-		if err != nil {
-			return preToolUseHookOutput{}, false
-		}
-		updated["command"] = encoded
 		guidance := rewriteContext
 		if verdict.compound {
 			guidance = compoundRewriteContext
@@ -159,7 +153,7 @@ func worktreeAddHookOutput(ctx context.Context, payload []byte, workspaceRoot st
 				PermissionDecision:       "allow",
 				PermissionDecisionReason: rewriteReason,
 				AdditionalContext:        guidance,
-				UpdatedInput:             updated,
+				UpdatedInput:             updatedCommandInput(decoded.ToolInput, verdict.command),
 			},
 			SystemMessage:        rewriteSystemMessage,
 			leaseDirectoryOffset: verdict.leaseDirectoryOffset,
@@ -170,6 +164,13 @@ func worktreeAddHookOutput(ctx context.Context, payload []byte, workspaceRoot st
 		return preToolUseHookOutput{}, false
 	}
 	return preToolUseHookOutput{}, false
+}
+
+func updatedCommandInput(input map[string]json.RawMessage, command string) map[string]json.RawMessage {
+	encoded, _ := json.Marshal(command)
+	updated := maps.Clone(input)
+	updated["command"] = encoded
+	return updated
 }
 
 // writeUnmanagedPreToolUseDecision は wx 外の session の判定を 1 つだけ stdout へ書く。
@@ -197,7 +198,7 @@ func writePreToolUseOutput(output preToolUseHookOutput) {
 }
 
 // preToolUseDecision は git worktree add の書き換えを優先し、判定を 1 つだけ選ぶ。
-// ここでの SubAgent の isolation とブランチ attach の deny は管理下 session（WX_SESSION_ID あり）に限る。
+// ここでの SubAgent の isolation とブランチ attach の判定は管理下 session（WX_SESSION_ID あり）に限る。
 // wx 外の session の isolation は writeUnmanagedPreToolUseDecision が保存済み方針を引いて判定する。
 // 書き換えは allow で返り連結の残りも判定を通らないため、管理下では書き換え後の command をブランチ attach の判定に通す。
 // commentlint:allow-long -- 書き換え後にも attach の判定を通す理由を残す
@@ -208,7 +209,8 @@ func preToolUseDecision(ctx context.Context, payload []byte, workspaceRoot strin
 	if output, ok := worktreeAddHookOutput(ctx, payload, workspaceRoot); ok || !managed {
 		if ok && managed && output.HookSpecificOutput.UpdatedInput != nil {
 			rewritten := rewrittenPayload(payload, output.HookSpecificOutput.UpdatedInput)
-			if denied, deny := branchAttachHookOutput(ctx, rewritten, output.leaseDirectoryOffset); deny {
+			// 貸出先がまだ存在しないため、書き換え後の連結では attach の拒否だけを判定する。
+			if denied, deny := branchAttachHookOutput(ctx, rewritten, "", output.leaseDirectoryOffset); deny {
 				return denied, true
 			}
 		}
@@ -217,7 +219,7 @@ func preToolUseDecision(ctx context.Context, payload []byte, workspaceRoot strin
 	if output, ok := subagentIsolationHookOutput(payload); ok {
 		return output, true
 	}
-	return branchAttachHookOutput(ctx, payload, 0)
+	return branchAttachHookOutput(ctx, payload, workspaceRoot, 0)
 }
 
 // rewrittenPayload は payload の tool_input を書き換え後の入力へ差し替える。組み立てに失敗すれば元の payload を返す。

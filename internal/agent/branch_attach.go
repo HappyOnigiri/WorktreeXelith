@@ -47,10 +47,10 @@ var branchPolicyGitCommand = regexp.MustCompile(`(?:^|[\s;&|('"` + "`" + `])(?:\
 // unsafeGitEnvironmentPrefixes は git の作業ツリーや git ディレクトリを差し替える環境変数の指定である。
 var unsafeGitEnvironmentPrefixes = []string{"GIT_WORK_TREE=", "GIT_DIR=", "GIT_INDEX_FILE="}
 
-// branchAttachHookOutput は wx session の Bash 呼び出しのうち、linked worktree へブランチを attach する git を deny する。
+// branchAttachHookOutput は linked worktree への attach を拒否するか、コミットを調べる連結なら detached に書き換える。
 // main worktree と Git の管理下にないディレクトリでは何もしない。
 // 対象の git 呼び出しを含むのに実行先か引数を静的に決められない command は、見逃しを防ぐため deny に倒す。
-func branchAttachHookOutput(ctx context.Context, payload []byte, leaseDirectoryOffset int) (preToolUseHookOutput, bool) {
+func branchAttachHookOutput(ctx context.Context, payload []byte, workspaceRoot string, leaseDirectoryOffset int) (preToolUseHookOutput, bool) {
 	// 全ツール呼び出しで走るため、関係しない payload は JSON を解く前に落とす。
 	raw := string(payload)
 	if !strings.Contains(raw, "checkout") && !strings.Contains(raw, "switch") && !strings.Contains(raw, "symbolic-ref") {
@@ -75,6 +75,20 @@ func branchAttachHookOutput(ctx context.Context, payload []byte, leaseDirectoryO
 	runner := &gitx.Runner{Timeout: branchPolicyGitTimeout}
 	switch classifyBranchAttach(ctx, runner, command, cwd, leaseDirectoryOffset) {
 	case branchPolicyAttach:
+		if _, hasWorkdir := decoded.ToolInput["workdir"]; workspaceRoot != "" && !hasWorkdir && filepath.IsAbs(decoded.CWD) {
+			if rewritten, ok := detachBranchInspection(ctx, runner, command, cwd, workspaceRoot); ok {
+				return preToolUseHookOutput{
+					HookSpecificOutput: preToolUseHookSpecificOutput{
+						HookEventName:            "PreToolUse",
+						PermissionDecision:       "allow",
+						PermissionDecisionReason: "The following Git commands only inspect the commit, so wx keeps the linked worktree detached.",
+						UpdatedInput:             updatedCommandInput(decoded.ToolInput, rewritten),
+					},
+					SystemMessage:              "wx rewrote the branch attach as a detached checkout.",
+					denyAttachOnReadinessError: true,
+				}, true
+			}
+		}
 		return denyPreToolUse(branchAttachReason, branchAttachSystemMessage), true
 	case branchPolicyUnresolved:
 		return denyPreToolUse(branchPolicyUnresolvedReason, branchPolicyUnresolvedSystemMessage), true
