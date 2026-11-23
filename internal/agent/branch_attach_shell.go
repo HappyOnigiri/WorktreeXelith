@@ -40,7 +40,7 @@ const (
 )
 
 // start と end は command 内の語のバイト範囲で、語の token にだけ入る。
-// operator は区切りの原文（`&&` `||` `;` 改行）と、引用されていない置換を開く括弧の `$(` である。
+// operator は区切り・リダイレクトの原文か、引用されていない置換を開く `$(` である。
 // どちらも git worktree add を連結の中で書き換えるときに、置き換える範囲と前後の繋ぎ方を知るために使う。
 // commentlint:allow-long -- 位置と区切りの原文を持つ理由を残す
 type policyToken struct {
@@ -225,11 +225,13 @@ func (l *policyLexer) operator(char byte) bool {
 	case char == ';':
 		l.emitSeparator(";")
 	case char == '&' && next == '>':
+		start := l.index
 		l.index++
 		if l.next() == '>' {
 			l.index++
 		}
 		l.emit(policyTokenRedirect)
+		l.tokens[len(l.tokens)-1].operator = l.command[start : l.index+1]
 	case next == char && (char == '&' || char == '|'):
 		l.index++
 		l.emitSeparator(string([]byte{char, char}))
@@ -262,13 +264,15 @@ func (l *policyLexer) redirect() {
 	}
 	start := l.index
 	l.index = consumeRedirect(l.command, l.index)
-	switch l.command[start : l.index+1] {
+	operator := l.command[start : l.index+1]
+	switch operator {
 	case "<<-":
 		l.heredocDelimiter, l.stripTabs = true, true
 	case "<<":
 		l.heredocDelimiter, l.stripTabs = true, false
 	}
 	l.emit(policyTokenRedirect)
+	l.tokens[len(l.tokens)-1].operator = operator
 }
 
 func (l *policyLexer) unquoted(char byte) {

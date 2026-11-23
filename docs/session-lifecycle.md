@@ -94,8 +94,9 @@
    `git -C`だけは、値がworkspace内のrepositoryを指すかをファイルシステムで確かめ、そのディレクトリで`wx new`を実行する形へ写す。
    multi-repository workspaceの`repo=`セレクタへ写さないのは、slot内のディレクトリ名がsource側のrepository名と一致する保証がないためである。
    また`git -C`が作るのはそのrepository単独のworktreeで、repository内で実行した`wx new`も単独のrepositoryを貸し出すので意味が揃う。
-   連結の中では、パス引数が変数1つで直後が`&&`か末尾の形だけを`NAME=$(wx new ...)`へ置き換え、残りの文字列はそのまま残す。
-   貸出に失敗すれば`&&`で後続が止まるためで、`;`などで続く形は失敗時に空の変数のまま後続が今のworkspaceで走るので拒否する。
+   連結の中では、パスを指定した変数に貸出先を代入して後続へ渡す。
+   固定パスは、直後の`&& cd`と同じ行き先を指し、残りのコマンドが元のパスを参照しないと静的に確認できる場合に、`cd`と一緒に置き換える。
+   貸出に失敗すると`&&`で後続が止まる。`;`などで作成後の処理が貸出の成否に関係なく走る形は拒否する。
    前にある`cd`は追い、workspace内に静的に解決できる場合だけ受け付ける。
 
    管理下のsessionでは、同じhookが`Agent(isolation="worktree")`と、linked worktreeへブランチをattachする`checkout`・`switch`・`symbolic-ref`も拒否する。

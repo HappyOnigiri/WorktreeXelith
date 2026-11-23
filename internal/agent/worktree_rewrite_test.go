@@ -22,7 +22,7 @@ func TestClassifyWorktreeAddCommand(t *testing.T) {
 		{name: "remote start point", command: "git worktree add x origin/feature/one", decision: worktreeAddRewrite, rewrite: "wx new --branch feature/one"},
 		{name: "absolute git", command: "/usr/bin/git worktree add -f --no-checkout x", decision: worktreeAddRewrite, rewrite: "wx new"},
 		{name: "quoted path", command: `git worktree add "/tmp/dir with space" main`, decision: worktreeAddRewrite, rewrite: "wx new --branch main"},
-		{name: "compound", command: "git worktree add x && cd x", decision: worktreeAddDeny, reason: denyReasonCompound},
+		{name: "compound without a matching cd", command: "git worktree add x && cd y", decision: worktreeAddDeny, reason: denyReasonCompound},
 		{name: "redirect", command: "git worktree add x > log", decision: worktreeAddDeny, reason: denyReasonCompound},
 		{name: "nested shell", command: `sh -c 'git worktree add x'`, decision: worktreeAddDeny, reason: denyReasonCompound},
 		// cwd を持たない payload では相対の -C を解決できない。

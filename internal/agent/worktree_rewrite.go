@@ -41,9 +41,9 @@ const (
 	rewriteReason        = "wx leases prepared worktrees, so git worktree add is replaced with wx new."
 )
 
-// compoundRewriteContext は連結の一部を書き換えたときの案内で、パスは変数で後続へ渡り、command 自身が表示する。
-const compoundRewriteContext = `wx replaced git worktree add inside the command with NAME=$(wx new ...), which leases a workspace that wx prepares, tracks and returns.
-- The variable that named the worktree path now holds the leased path for the rest of the command, and the command prints it as NAME=<path>. The path assigned before was never created.
+// compoundRewriteContext は連結を書き換えた後、貸出先をどこで確認できるかを伝える。
+const compoundRewriteContext = `wx replaced git worktree add inside the command with wx new, which leases a workspace that wx prepares, tracks and returns.
+- The command passes the leased path to the remaining commands and prints it as NAME=<path>.
 - Use the printed path in later tool calls.
 - The leased workspace is detached. Run "git branch <name> HEAD" inside it when the work needs a branch.
 - No need to run wx release: the lease is returned when this session ends.

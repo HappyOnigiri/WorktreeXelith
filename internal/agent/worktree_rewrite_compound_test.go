@@ -3,7 +3,9 @@ package agent
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -28,8 +30,8 @@ func compoundFixture(t *testing.T) (root, outside string) {
 	return root, outside
 }
 
-// TestClassifyWorktreeAddCommandRewritesCompound は、パスを変数で後続へ渡す連結だけを
-// `NAME=$(wx new ...)` へ書き換え、残りの文字列をそのまま残すことを確認する。
+// TestClassifyWorktreeAddCommandRewritesCompound は、変数または直後の cd に貸出先を渡し、
+// 残りの文字列をそのまま残すことを確認する。
 func TestClassifyWorktreeAddCommandRewritesCompound(t *testing.T) {
 	root, _ := compoundFixture(t)
 	server := filepath.Join(root, "server")
@@ -37,6 +39,18 @@ func TestClassifyWorktreeAddCommandRewritesCompound(t *testing.T) {
 	tests := []struct {
 		name, cwd, command, rewrite string
 	}{
+		{
+			name:    "literal path",
+			cwd:     server,
+			command: `git worktree add x && cd x`,
+			rewrite: `wx_worktree_path=$(wx new) && echo "wx_worktree_path=$wx_worktree_path" && cd -- "$wx_worktree_path"`,
+		},
+		{
+			name:    "quoted path and repository option",
+			cwd:     root,
+			command: `git -C server worktree add --detach 'new tree' origin/main && cd -- "./server/new tree" && cat file 2>/dev/null | head`,
+			rewrite: `wx_worktree_path=$(cd '` + server + `' && wx new --branch main) && echo "wx_worktree_path=$wx_worktree_path" && cd -- "$wx_worktree_path" && cat file 2>/dev/null | head`,
+		},
 		{
 			name:    "cd into a repository before the candidate",
 			cwd:     root,
@@ -107,7 +121,20 @@ func TestClassifyWorktreeAddCommandKeepsUnsafeCompoundsDenied(t *testing.T) {
 		{name: "pipe after the candidate", cwd: server, command: `git worktree add --detach "$WT" 3139d39 2>&1 | tail -1 && cd "$WT"`},
 		{name: "semicolon after the candidate", cwd: server, command: `git worktree add --detach "$WT" 3139d39; cd "$WT"`},
 		{name: "or before the candidate", cwd: server, command: `false || git worktree add "$WT" HEAD && cd "$WT"`},
-		{name: "literal path", cwd: server, command: "git worktree add x && cd x"},
+		{name: "literal path without cd", cwd: server, command: `git worktree add x && ls`},
+		{name: "different literal path", cwd: server, command: `git worktree add x && cd y`},
+		{name: "different bases with git -C", cwd: root, command: `git -C server worktree add x && cd x`},
+		{name: "literal path with semicolon", cwd: server, command: `git worktree add x; cd x`},
+		{name: "duplicate operator before cd", cwd: server, command: `git worktree add x && && cd x`},
+		{name: "semicolon after cd", cwd: server, command: `git worktree add x && cd x; pwd`},
+		{name: "or after suffix", cwd: server, command: `git worktree add x && cd x && true || pwd`},
+		{name: "newline after suffix", cwd: server, command: "git worktree add x && cd x && true\npwd"},
+		{name: "literal path reused in argument", cwd: server, command: `git worktree add /tmp/x && cd /tmp/x && tool --path=/tmp/x/file`},
+		{name: "literal path reused in redirect", cwd: server, command: `git worktree add /tmp/x && cd /tmp/x && echo yes >/tmp/x/file`},
+		{name: "literal path hidden in heredoc", cwd: server, command: "git worktree add x && cd x && cat <<'EOF'\nx\nEOF"},
+		{name: "literal path through expansion", cwd: server, command: `git worktree add x && cd x && cat "$OLDPWD/x"`},
+		{name: "glob in path", cwd: server, command: `git worktree add x* && cd x*`},
+		{name: "assignment name already in use", cwd: server, command: `wx_worktree_path=other; git worktree add x && cd x`},
 		{name: "path built from a variable", cwd: server, command: `git worktree add --detach $S/wt 3139d39 && cd $S/wt`},
 		{name: "reserved variable", cwd: server, command: `git worktree add "$HOME" HEAD && ls`},
 		{name: "subshell around the candidate", cwd: server, command: `(git worktree add "$WT" HEAD) && cd "$WT"`},
@@ -137,6 +164,66 @@ func TestClassifyWorktreeAddCommandKeepsUnsafeCompoundsDenied(t *testing.T) {
 	}
 }
 
+// TestPreToolUseDecisionRunsLiteralWorktreeChain は、貸出成功時だけ後続が貸出先で走ることを Bash で確認する。
+func TestPreToolUseDecisionRunsLiteralWorktreeChain(t *testing.T) {
+	root, _ := compoundFixture(t)
+	server := filepath.Join(root, "server")
+	leased := filepath.Join(root, "lease with space")
+	if err := os.Mkdir(leased, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(leased, "marker"), []byte("inside lease\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	payload, err := json.Marshal(map[string]any{
+		"cwd": root, "tool_input": map[string]string{
+			"command": `git -C server worktree add --detach x origin/main && cd server/x && pwd && cat marker`,
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	output, ok := preToolUseDecision(t.Context(), payload, root, true)
+	if !ok || output.HookSpecificOutput.PermissionDecision != "allow" {
+		t.Fatalf("hook decision = %+v, want allow", output.HookSpecificOutput)
+	}
+	var rewritten string
+	if err := json.Unmarshal(output.HookSpecificOutput.UpdatedInput["command"], &rewritten); err != nil {
+		t.Fatal(err)
+	}
+	stub := `wx() {
+		printf '%s %s\n' "$PWD" "$*" >&2
+		printf '%s\n' "$WX_TEST_LEASE"
+		return "$WX_TEST_EXIT"
+	}
+	`
+	wantCall := server + " new --branch main\n"
+	for _, tc := range []struct {
+		name, status, output string
+	}{
+		{"success", "0", wantCall + "wx_worktree_path=" + leased + "\n" + leased + "\ninside lease\n"},
+		{"failure", "27", wantCall},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			cmd := exec.CommandContext(t.Context(), "/bin/bash", "-c", stub+rewritten)
+			cmd.Dir = root
+			cmd.Env = append(os.Environ(), "BASH_ENV=", "WX_TEST_LEASE="+leased, "WX_TEST_EXIT="+tc.status)
+			got, err := cmd.CombinedOutput()
+			var exit *exec.ExitError
+			if tc.status == "0" {
+				if err != nil {
+					t.Fatal(err)
+				}
+			} else if !errors.As(err, &exit) || exit.ExitCode() != 27 {
+				t.Fatalf("Bash error = %v, want exit 27", err)
+			}
+			if string(got) != tc.output {
+				t.Fatalf("Bash output = %q, want %q", got, tc.output)
+			}
+		})
+	}
+}
+
 // TestPreToolUseDecisionChecksBranchAttachAfterCompoundRewrite は、連結を書き換えて allow を返す前に
 // 書き換え後の command をブランチ attach の判定へ通すことを確認する。
 func TestPreToolUseDecisionChecksBranchAttachAfterCompoundRewrite(t *testing.T) {
@@ -154,13 +241,14 @@ func TestPreToolUseDecisionChecksBranchAttachAfterCompoundRewrite(t *testing.T) 
 		}
 		return output
 	}
-	attach := `git worktree add --detach "$WT" HEAD && cd "$WT" && git checkout -b topic`
-	if output := decide(t, attach, true); output.HookSpecificOutput.PermissionDecision != "deny" {
-		t.Fatalf("managed attach after rewrite=%+v, want deny", output.HookSpecificOutput)
-	}
-	// wx 外の直接起動は従来どおりブランチ attach を判定しない。
-	if output := decide(t, attach, false); output.HookSpecificOutput.PermissionDecision != "allow" {
-		t.Fatalf("direct attach after rewrite=%+v, want allow", output.HookSpecificOutput)
+	for _, path := range []string{`"$WT"`, "x"} {
+		attach := `git worktree add --detach ` + path + ` HEAD && cd ` + path + ` && git checkout -b topic`
+		if output := decide(t, attach, true); output.HookSpecificOutput.PermissionDecision != "deny" {
+			t.Fatalf("managed attach after rewrite=%+v, want deny", output.HookSpecificOutput)
+		}
+		if output := decide(t, attach, false); output.HookSpecificOutput.PermissionDecision != "allow" {
+			t.Fatalf("direct attach after rewrite=%+v, want allow", output.HookSpecificOutput)
+		}
 	}
 	output := decide(t, `git worktree add --detach "$WT" HEAD && cd "$WT" && make test`, true)
 	specific := output.HookSpecificOutput
