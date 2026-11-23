@@ -139,13 +139,6 @@ func worktreeAddHookOutput(payload []byte, workspaceRoot string) (preToolUseHook
 	verdict := classifyWorktreeAddCommand(command, worktreeAddLocation{cwd: decoded.CWD, root: workspaceRoot})
 	switch verdict.decision {
 	case worktreeAddRewrite:
-		updated := make(map[string]json.RawMessage, len(decoded.ToolInput))
-		maps.Copy(updated, decoded.ToolInput)
-		encoded, err := json.Marshal(verdict.command)
-		if err != nil {
-			return preToolUseHookOutput{}, false
-		}
-		updated["command"] = encoded
 		guidance := rewriteContext
 		if verdict.compound {
 			guidance = compoundRewriteContext
@@ -156,7 +149,7 @@ func worktreeAddHookOutput(payload []byte, workspaceRoot string) (preToolUseHook
 				PermissionDecision:       "allow",
 				PermissionDecisionReason: rewriteReason,
 				AdditionalContext:        guidance,
-				UpdatedInput:             updated,
+				UpdatedInput:             updatedCommandInput(decoded.ToolInput, verdict.command),
 			},
 			SystemMessage: rewriteSystemMessage,
 		}, true
@@ -166,6 +159,13 @@ func worktreeAddHookOutput(payload []byte, workspaceRoot string) (preToolUseHook
 		return preToolUseHookOutput{}, false
 	}
 	return preToolUseHookOutput{}, false
+}
+
+func updatedCommandInput(input map[string]json.RawMessage, command string) map[string]json.RawMessage {
+	encoded, _ := json.Marshal(command)
+	updated := maps.Clone(input)
+	updated["command"] = encoded
+	return updated
 }
 
 // writeUnmanagedPreToolUseDecision は wx 外の session の判定を 1 つだけ stdout へ書く。
@@ -193,7 +193,7 @@ func writePreToolUseOutput(output preToolUseHookOutput) {
 }
 
 // preToolUseDecision は git worktree add の書き換えを優先し、判定を 1 つだけ選ぶ。
-// ここでの SubAgent の isolation とブランチ attach の deny は管理下 session（WX_SESSION_ID あり）に限る。
+// ここでの SubAgent の isolation とブランチ attach の判定は管理下 session（WX_SESSION_ID あり）に限る。
 // wx 外の session の isolation は writeUnmanagedPreToolUseDecision が保存済み方針を引いて判定する。
 // 書き換えは allow で返り連結の残りも判定を通らないため、管理下では書き換え後の command をブランチ attach の判定に通す。
 // commentlint:allow-long -- 書き換え後にも attach の判定を通す理由を残す
@@ -203,8 +203,8 @@ func preToolUseDecision(ctx context.Context, payload []byte, workspaceRoot strin
 	}
 	if output, ok := worktreeAddHookOutput(payload, workspaceRoot); ok || !managed {
 		if ok && managed && output.HookSpecificOutput.UpdatedInput != nil {
-			if denied, deny := branchAttachHookOutput(ctx, rewrittenPayload(payload, output.HookSpecificOutput.UpdatedInput)); deny {
-				return denied, true
+			if checked, decided := branchAttachHookOutput(ctx, rewrittenPayload(payload, output.HookSpecificOutput.UpdatedInput)); decided {
+				return checked, true
 			}
 		}
 		return output, ok

@@ -98,11 +98,13 @@
    貸出に失敗すれば`&&`で後続が止まるためで、`;`などで続く形は失敗時に空の変数のまま後続が今のworkspaceで走るので拒否する。
    前にある`cd`は追い、workspace内に静的に解決できる場合だけ受け付ける。
 
-   管理下のsessionでは、同じhookが`Agent(isolation="worktree")`と、linked worktreeへブランチをattachする`checkout`・`switch`・`symbolic-ref`も拒否する。
-   前者はwx管理外のworktreeを残してlink ruleも適用しないため、後者はslotをdetachedのまま保つためである。
+   管理下のsessionでは、同じhookが`Agent(isolation="worktree")`を拒否し、wx管理外のworktreeがlink ruleの適用を受けずに残るのを防ぐ。
    `Agent(isolation="worktree")`はwxの外で起動したsessionでも、cwdのworkspaceの保存済み方針が`hot`か`cold`なら拒否する。
    wxの外のsessionは終了してもleaseを返さないため、案内には`wx new --json`のidを控えて`wx release`で返す手順を含める。
    `off` / `ask`ではwx newを使う前提が無いので素通しする。
+   管理下のsessionでは、linked worktreeへブランチをattachする`checkout`・`switch`・`symbolic-ref`も原則として拒否し、slotをdetachedのまま保つ。
+   既存のローカルブランチを指定した`checkout`や`switch`の後が、同じ実行先でHEADのコミットだけを調べる`&&`連結なら、ブランチ先端のコミットへdetachedで切り替える。
+   後続の調査はそのコミットを参照し、切り替えが失敗すれば`&&`で止まる。
    attachの判定はcdとサブシェルを追って各git呼び出しの実行先を決め、対象のgit呼び出しを含むのに実行先や引数を静的に決められない場合は見逃しを避けて拒否する。
    判定は1回のhookで1つだけ出し、`git worktree add`の書き換えを優先する。
    ただし書き換えはallowで返り、連結の残りもそのまま走るので、管理下のsessionでは書き換え後のcommandをattachの判定に通し、拒否ならそちらを出す。
