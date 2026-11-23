@@ -36,6 +36,9 @@ func TestClassifyWorktreeAddCommandRewritesCompound(t *testing.T) {
 	root, _ := compoundFixture(t)
 	server := filepath.Join(root, "server")
 	oid := "3139d393c8470d47e7cf30810580acad50a907e7"
+	if err := os.Symlink("server", filepath.Join(root, "server-link")); err != nil {
+		t.Fatal(err)
+	}
 	tests := []struct {
 		name, cwd, command, rewrite string
 	}{
@@ -56,6 +59,12 @@ func TestClassifyWorktreeAddCommandRewritesCompound(t *testing.T) {
 			cwd:     root,
 			command: `git -C server worktree add --detach 'new tree' origin/main && cd -- "./server/new tree" && cat file 2>/dev/null | head`,
 			rewrite: `wx_worktree_path=$(cd '` + server + `' && wx new --branch main) && echo "wx_worktree_path=$wx_worktree_path" && cd -- "$wx_worktree_path" && cat file 2>/dev/null | head`,
+		},
+		{
+			name:    "repository symlink and missing target parents",
+			cwd:     root,
+			command: `git -C server-link worktree add new/x && cd ./server-link/new/x`,
+			rewrite: `wx_worktree_path=$(cd '` + server + `' && wx new) && echo "wx_worktree_path=$wx_worktree_path" && cd -- "$wx_worktree_path"`,
 		},
 		{
 			name:    "cd into a repository before the candidate",

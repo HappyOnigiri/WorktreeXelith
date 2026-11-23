@@ -1,6 +1,8 @@
 package agent
 
 import (
+	"errors"
+	"os"
 	"path/filepath"
 	"regexp"
 	"strings"
@@ -330,10 +332,37 @@ func literalWorktreePath(word shellWord, cwd string) string {
 	if path == "." || path == "/" {
 		return ""
 	}
-	if filepath.IsAbs(path) {
-		return path
+	if !filepath.IsAbs(path) {
+		if cwd == "" {
+			return path
+		}
+		path = filepath.Join(cwd, path)
 	}
-	return filepath.Join(cwd, path)
+	parent := resolveLiteralWorktreePath(filepath.Dir(path))
+	if parent == "" {
+		return ""
+	}
+	return filepath.Join(parent, filepath.Base(path))
+}
+
+// resolveLiteralWorktreePath は実在する祖先の実パスに、未作成の末尾を付け直す。
+func resolveLiteralWorktreePath(path string) string {
+	resolved, err := filepath.EvalSymlinks(path)
+	if err == nil {
+		return resolved
+	}
+	if !errors.Is(err, os.ErrNotExist) || path == filepath.Dir(path) {
+		return ""
+	}
+	// リンク切れのパスを未作成のディレクトリと同じように扱わない。
+	if _, err := os.Lstat(path); !errors.Is(err, os.ErrNotExist) {
+		return ""
+	}
+	parent := resolveLiteralWorktreePath(filepath.Dir(path))
+	if parent == "" {
+		return ""
+	}
+	return filepath.Join(parent, filepath.Base(path))
 }
 
 // literalWorktreeSuffix は貸出先からの相対操作を残す。元の作成先を参照し得る語や展開があれば拒否する。
