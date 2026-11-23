@@ -43,7 +43,7 @@ func TestClassifyWorktreeAddCommandRewritesCompound(t *testing.T) {
 			name:    "literal path",
 			cwd:     server,
 			command: `git worktree add x && cd x`,
-			rewrite: `wx_worktree_path=$(wx new) && echo "wx_worktree_path=$wx_worktree_path" && cd -- "$wx_worktree_path"`,
+			rewrite: `wx_worktree_path=$(` + compoundCDPATHGuard + `wx new) && echo "wx_worktree_path=$wx_worktree_path" && cd -- "$wx_worktree_path"`,
 		},
 		{
 			name:    "quoted path and repository option",
@@ -199,23 +199,26 @@ func TestPreToolUseDecisionRunsLiteralWorktreeChain(t *testing.T) {
 	`
 	wantCall := server + " new --branch main\n"
 	for _, tc := range []struct {
-		name, status, output string
+		name, leaseStatus, cdpath, output string
+		exitCode                          int
 	}{
-		{"success", "0", wantCall + "wx_worktree_path=" + leased + "\n" + leased + "\ninside lease\n"},
-		{"failure", "27", wantCall},
+		{"success", "0", "", wantCall + "wx_worktree_path=" + leased + "\n" + leased + "\ninside lease\n", 0},
+		{"empty CDPATH components", "0", "::", wantCall + "wx_worktree_path=" + leased + "\n" + leased + "\ninside lease\n", 0},
+		{"failure", "27", "", wantCall, 27},
+		{"CDPATH search", "0", root, "wx: CDPATH may change the cd destination; retry with an absolute or ./-prefixed cd path.\n", 1},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			cmd := exec.CommandContext(t.Context(), "/bin/bash", "-c", stub+rewritten)
 			cmd.Dir = root
-			cmd.Env = append(os.Environ(), "BASH_ENV=", "WX_TEST_LEASE="+leased, "WX_TEST_EXIT="+tc.status)
+			cmd.Env = append(os.Environ(), "BASH_ENV=", "WX_TEST_LEASE="+leased, "WX_TEST_EXIT="+tc.leaseStatus, "CDPATH="+tc.cdpath)
 			got, err := cmd.CombinedOutput()
 			var exit *exec.ExitError
-			if tc.status == "0" {
+			if tc.exitCode == 0 {
 				if err != nil {
 					t.Fatal(err)
 				}
-			} else if !errors.As(err, &exit) || exit.ExitCode() != 27 {
-				t.Fatalf("Bash error = %v, want exit 27", err)
+			} else if !errors.As(err, &exit) || exit.ExitCode() != tc.exitCode {
+				t.Fatalf("Bash error = %v, want exit %d", err, tc.exitCode)
 			}
 			if string(got) != tc.output {
 				t.Fatalf("Bash output = %q, want %q", got, tc.output)

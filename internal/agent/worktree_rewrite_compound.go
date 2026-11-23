@@ -43,7 +43,10 @@ var compoundReservedVariables = map[string]bool{
 	"PATH": true, "HOME": true, "PWD": true, "OLDPWD": true, "IFS": true, "CDPATH": true, "SHELL": true, "TMPDIR": true,
 }
 
-const compoundLiteralPathVariable = "wx_worktree_path"
+const (
+	compoundLiteralPathVariable = "wx_worktree_path"
+	compoundCDPATHGuard         = `case "${CDPATH-}" in (*[!:]*) printf '%s\n' 'wx: CDPATH may change the cd destination; retry with an absolute or ./-prefixed cd path.' >&2; exit 1;; esac; `
+)
 
 // rewriteCompoundWorktreeAdd は連結の中の git worktree add 1 つを wx new へ写す。
 // 変数は貸出先で上書きし、固定パスは直後の cd と一緒に置き換える。
@@ -247,7 +250,7 @@ func (w *compoundWalk) follow(words []shellWord, current compoundCommand) bool {
 func compoundReplacement(command string, verdict worktreeAddVerdict, current compoundCommand, following []compoundCommand, cwd string) (string, bool) {
 	start := current.words[0].start
 	end := current.words[len(current.words)-1].end
-	var name, changeDirectory string
+	var name, changeDirectory, leaseGuard string
 	if verdict.path.expanded {
 		match := compoundPathVariable.FindStringSubmatch(verdict.path.value)
 		if match == nil {
@@ -267,13 +270,18 @@ func compoundReplacement(command string, verdict worktreeAddVerdict, current com
 			return "", false
 		}
 		end = words[len(words)-1].end
+		target := words[len(words)-1].word.value
+		// cd が CDPATH を参照する形では、貸出前に実行時の値を確かめる。
+		if !filepath.IsAbs(target) && !strings.HasPrefix(target, "./") {
+			leaseGuard = compoundCDPATHGuard
+		}
 		changeDirectory = ` && cd -- "$` + name + `"`
 	}
 	inner := verdict.command
 	if verdict.directory != "" {
 		inner = "cd " + shellSingleQuote(verdict.directory) + " && " + inner
 	}
-	lease := name + "=$(" + inner + `) && echo "` + name + `=$` + name + `"`
+	lease := name + "=$(" + leaseGuard + inner + `) && echo "` + name + `=$` + name + `"`
 	return command[:start] + lease + changeDirectory + command[end:], true
 }
 
